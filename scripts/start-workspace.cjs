@@ -22,6 +22,38 @@ function spawnPnpm(args, label) {
   return child;
 }
 
+function terminateChild(child) {
+  if (!child || child.killed || child.exitCode !== null) {
+    return;
+  }
+
+  if (process.platform === "win32") {
+    const killer = spawn(
+      process.env.ComSpec || "cmd.exe",
+      ["/d", "/s", "/c", "taskkill", "/PID", String(child.pid), "/T", "/F"],
+      {
+        stdio: "ignore",
+        windowsHide: true,
+      },
+    );
+
+    killer.on("error", () => {
+      try {
+        child.kill("SIGTERM");
+      } catch {}
+    });
+    return;
+  }
+
+  try {
+    process.kill(-child.pid, "SIGTERM");
+  } catch {
+    try {
+      child.kill("SIGTERM");
+    } catch {}
+  }
+}
+
 function main() {
   const appArgs = process.argv.slice(2);
   if (appArgs[0] === "--") {
@@ -47,11 +79,8 @@ function main() {
 
     shuttingDown = true;
 
-    for (const child of [apiChild, appChild]) {
-      if (child && !child.killed) {
-        child.kill("SIGTERM");
-      }
-    }
+    terminateChild(apiChild);
+    terminateChild(appChild);
 
     process.exit(exitCode);
   }
