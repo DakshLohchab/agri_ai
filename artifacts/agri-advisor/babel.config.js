@@ -1,7 +1,8 @@
+const fs = require("fs");
 const path = require("path");
 
 function loadExpoRouterPlugin() {
-  const expoPackageJson = require.resolve("expo/package.json");
+  const expoPackageJson = fs.realpathSync(require.resolve("expo/package.json"));
   const pluginPath = path.join(
     path.dirname(expoPackageJson),
     "..",
