@@ -4,7 +4,15 @@
   "license": "MIT",
   "scripts": {
     "preinstall": "npx only-allow pnpm",
+    "start": "node scripts/start-workspace.cjs",
+    "dev": "pnpm run start",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
+    "preview": "pnpm --filter @workspace/agri-advisor run preview",
+    "app:build": "pnpm --filter @workspace/agri-advisor run build",
+    "app:serve": "pnpm --filter @workspace/agri-advisor run serve",
+    "app:start": "pnpm --filter @workspace/agri-advisor run start",
+    "api:dev": "pnpm --filter @workspace/api-server run dev",
+    "api:start": "pnpm --filter @workspace/api-server run start",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
   },
