@@ -4,12 +4,12 @@ import {
   Platform,
   Pressable,
   RefreshControl,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "@/constants/colors";
 
 type Commodity = {
@@ -70,10 +70,8 @@ const SCHEMES = [
 ];
 
 export default function MarketScreen() {
-  const insets = useSafeAreaInsets();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<"prices" | "schemes">("prices");
-  const topPad = Platform.OS === "web" ? 67 : insets.top;
 
   const handleRefresh = () => {
     setIsRefreshing(true);
@@ -81,19 +79,20 @@ export default function MarketScreen() {
   };
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={[styles.content, { paddingTop: topPad + 16 }]}
-      contentInsetAdjustmentBehavior="automatic"
-      showsVerticalScrollIndicator={false}
-      refreshControl={
-        <RefreshControl
-          refreshing={isRefreshing}
-          onRefresh={handleRefresh}
-          tintColor={Colors.market}
-        />
-      }
-    >
+    <SafeAreaView style={styles.container} edges={["left", "right", "top"]}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={[styles.content, { paddingTop: 16, paddingBottom: 90 }]}
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor={Colors.market}
+          />
+        }
+      >
       <View style={styles.pageHeader}>
         <Text style={styles.pageTitle}>Market</Text>
         <View style={styles.sourceBadge}>
@@ -230,6 +229,7 @@ export default function MarketScreen() {
 
       <View style={{ height: 32 }} />
     </ScrollView>
+    </SafeAreaView>
   );
 }
 

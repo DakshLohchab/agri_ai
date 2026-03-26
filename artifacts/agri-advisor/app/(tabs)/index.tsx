@@ -5,12 +5,12 @@ import React from "react";
 import {
   Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "@/constants/colors";
 import { useAuth } from "@/context/AuthContext";
 import { useChat } from "@/context/ChatContext";
@@ -34,10 +34,8 @@ const AGENT_PIPELINE = [
 ];
 
 export default function HomeScreen() {
-  const insets = useSafeAreaInsets();
   const { user, signOut } = useAuth();
   const { createConversation } = useChat();
-  const topPad = Platform.OS === "web" ? 67 : insets.top;
 
   const handleQuickQuery = (label: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -59,12 +57,13 @@ export default function HomeScreen() {
   };
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={[styles.content, { paddingTop: topPad + 16 }]}
-      contentInsetAdjustmentBehavior="automatic"
-      showsVerticalScrollIndicator={false}
-    >
+    <SafeAreaView style={styles.container} edges={["left", "right", "top"]}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.content}
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+      >
       <View style={styles.headerRow}>
         <View style={styles.greetingBlock}>
           <Text style={styles.greeting}>{greeting()},</Text>
@@ -74,7 +73,7 @@ export default function HomeScreen() {
             <Text style={styles.location}>{user?.location ?? "India"}</Text>
           </View>
         </View>
-        <Pressable style={styles.avatarBtn} onPress={() => router.push("/(tabs)/agents")}>
+        <Pressable style={styles.avatarBtn} onPress={() => router.push("/profile")}>
           <View style={styles.avatar}>
             <Feather name="user" size={20} color={Colors.primary} />
           </View>
@@ -147,14 +146,15 @@ export default function HomeScreen() {
         </Pressable>
       </View>
 
-      <View style={{ height: 32 }} />
-    </ScrollView>
+        <View style={{ height: 32 }} />
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  content: { paddingHorizontal: 20, gap: 20 },
+  content: { paddingHorizontal: 20, gap: 20, paddingTop: 16, paddingBottom: 32 },
   headerRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" },
   greetingBlock: { gap: 2 },
   greeting: { fontSize: 15, color: Colors.textSecondary, fontFamily: "Inter_400Regular" },

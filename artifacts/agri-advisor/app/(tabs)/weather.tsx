@@ -5,12 +5,12 @@ import {
   Platform,
   Pressable,
   RefreshControl,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "@/constants/colors";
 import { useAuth } from "@/context/AuthContext";
 
@@ -42,15 +42,12 @@ function getWeather(code: number) {
 }
 
 export default function WeatherScreen() {
-  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const [weather, setWeather] = useState<WeatherDay[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [currentTemp, setCurrentTemp] = useState<number | null>(null);
-
-  const topPad = Platform.OS === "web" ? 67 : insets.top;
 
   const LOCATIONS: Record<string, { lat: number; lon: number }> = {
     default: { lat: 18.9667, lon: 72.8333 },
@@ -109,20 +106,31 @@ export default function WeatherScreen() {
   const todayWeather = today ? getWeather(today.weatherCode) : null;
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={[styles.content, { paddingTop: topPad + 16 }]}
-      contentInsetAdjustmentBehavior="automatic"
-      showsVerticalScrollIndicator={false}
-      refreshControl={
-        <RefreshControl
-          refreshing={isRefreshing}
-          onRefresh={() => { setIsRefreshing(true); fetchWeather(); }}
-          tintColor={Colors.primary}
-        />
-      }
-    >
-      <View style={styles.pageHeader}>
+    <SafeAreaView style={styles.container} edges={["left", "right", "top"]}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={[styles.content, { paddingTop: 16, paddingBottom: 90 }]}
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={() => { setIsRefreshing(true); fetchWeather(); }}
+            tintColor={Colors.weather}
+          />
+        }
+      >
+        <View style={styles.headerCard}>
+          <View style={[styles.headerCardIcon, { backgroundColor: Colors.weather + "22" }]}>
+            <Feather name="cloud" size={24} color={Colors.weather} />
+          </View>
+          <View style={styles.headerCardContent}>
+            <Text style={styles.headerCardTitle}>7-Day Forecast</Text>
+            <Text style={styles.headerCardDesc}>Live weather data for better planning</Text>
+          </View>
+        </View>
+
+        <View style={styles.pageHeader}>
         <Text style={styles.pageTitle}>Weather</Text>
         <Text style={styles.pageLocation}>
           <Feather name="map-pin" size={12} color={Colors.textMuted} />
@@ -220,6 +228,7 @@ export default function WeatherScreen() {
 
       <View style={{ height: 32 }} />
     </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -328,4 +337,25 @@ const styles = StyleSheet.create({
   alertContent: { flex: 1, gap: 4 },
   alertTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: Colors.warning },
   alertDesc: { fontSize: 13, color: Colors.textSecondary, fontFamily: "Inter_400Regular", lineHeight: 20 },
+  headerCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.surfaceBorder,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 20,
+  },
+  headerCardIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerCardContent: { flex: 1, gap: 2 },
+  headerCardTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: Colors.text },
+  headerCardDesc: { fontSize: 12, color: Colors.textSecondary, fontFamily: "Inter_400Regular" },
 });

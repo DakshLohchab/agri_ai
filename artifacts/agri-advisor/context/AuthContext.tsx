@@ -1,75 +1,110 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useState, useContext, ReactNode, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AuthService, User, AuthResponse } from '@/services/auth';
 
-type User = {
-  id: string;
-  name: string;
-  phone: string;
-  location: string;
-  cropTypes: string[];
-  language: string;
-  avatar?: string;
-};
-
-type AuthContextType = {
+interface AuthContextType {
   user: User | null;
+  token: string | null;
   isLoading: boolean;
-  signIn: (userData: User) => Promise<void>;
-  signOut: () => Promise<void>;
-  updateUser: (data: Partial<User>) => Promise<void>;
-};
+  signup: (email: string, password: string, name: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<void>;
+  googleLogin: (neonToken: string, userData: any) => Promise<void>;
+  logout: () => Promise<void>;
+  restoreToken: () => Promise<void>;
+}
 
-const AuthContext = createContext<AuthContextType>({
-  user: null,
-  isLoading: true,
-  signIn: async () => {},
-  signOut: async () => {},
-  updateUser: async () => {},
-});
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Restore token on app startup
   useEffect(() => {
-    loadUser();
+    bootstrapAsync();
   }, []);
 
-  const loadUser = async () => {
+  const bootstrapAsync = async () => {
     try {
-      const stored = await AsyncStorage.getItem("agri_user");
-      if (stored) {
-        setUser(JSON.parse(stored));
+      const data = await AuthService.restoreToken();
+      if (data) {
+        setToken(data.token);
+        setUser(data.user);
       }
-    } catch (e) {
-      console.error("Failed to load user", e);
+    } catch (error) {
+      console.error('Failed to restore token:', error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const signIn = async (userData: User) => {
-    await AsyncStorage.setItem("agri_user", JSON.stringify(userData));
-    setUser(userData);
+  const saveAuthData = async (authResponse: AuthResponse) => {
+    setToken(authResponse.token);
+    setUser(authResponse.user);
+    await AsyncStorage.setItem('token', authResponse.token);
+    await AsyncStorage.setItem('user', JSON.stringify(authResponse.user));
+    if (authResponse.neonToken) {
+      await AsyncStorage.setItem('neonToken', authResponse.neonToken);
+    }
   };
 
-  const signOut = async () => {
-    await AsyncStorage.removeItem("agri_user");
-    setUser(null);
+  const signup = async (email: string, password: string, name: string) => {
+    try {
+      const authResponse = await AuthService.signup(email, password, name);
+      await saveAuthData(authResponse);
+    } catch (error) {
+      throw error;
+    }
   };
 
-  const updateUser = async (data: Partial<User>) => {
-    if (!user) return;
-    const updated = { ...user, ...data };
-    await AsyncStorage.setItem("agri_user", JSON.stringify(updated));
-    setUser(updated);
+  const login = async (email: string, password: string) => {
+    try {
+      const authResponse = await AuthService.login(email, password);
+      await saveAuthData(authResponse);
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  const googleLogin = async (neonToken: string, userData: any) => {
+    try {
+      const authResponse = await AuthService.handleGoogleCallback(neonToken, userData);
+      await saveAuthData(authResponse);
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await AuthService.logout();
+    } finally {
+      setToken(null);
+      setUser(null);
+      await AsyncStorage.removeItem('token');
+      await AsyncStorage.removeItem('user');
+      await AsyncStorage.removeItem('neonToken');
+    }
+  };
+
+  const restoreToken = async () => {
+    await bootstrapAsync();
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, signIn, signOut, updateUser }}>
+    <AuthContext.Provider
+      value={{ user, token, isLoading, signup, login, googleLogin, logout, restoreToken }}
+    >
       {children}
     </AuthContext.Provider>
   );
-}
+};
 
-export const useAuth = () => useContext(AuthContext);
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};

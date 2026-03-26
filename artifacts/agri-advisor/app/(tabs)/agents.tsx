@@ -5,12 +5,12 @@ import {
   Animated,
   Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "@/constants/colors";
 import { AgentNode } from "@/components/AgentNode";
 import {
@@ -67,13 +67,11 @@ const PIPELINE_NODES = [
 ];
 
 export default function AgentsScreen() {
-  const insets = useSafeAreaInsets();
   const [activeSteps, setActiveSteps] = useState<AgentStep[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [activeScenario, setActiveScenario] = useState<DemoScenarioKey | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [view, setView] = useState<"pipeline" | "demo">("pipeline");
-  const topPad = Platform.OS === "web" ? 67 : insets.top;
   const scenarios = getDemoScenarios();
 
   const runScenario = async (key: DemoScenarioKey) => {
@@ -127,13 +125,24 @@ export default function AgentsScreen() {
   };
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={[styles.content, { paddingTop: topPad + 16 }]}
-      contentInsetAdjustmentBehavior="automatic"
-      showsVerticalScrollIndicator={false}
-    >
-      <View style={styles.pageHeader}>
+    <SafeAreaView style={styles.container} edges={["left", "right", "top"]}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={[styles.content, { paddingTop: 16, paddingBottom: 90 }]}
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.headerCard}>
+          <View style={[styles.headerCardIcon, { backgroundColor: Colors.synthesis + "22" }]}>
+            <Feather name="cpu" size={24} color={Colors.synthesis} />
+          </View>
+          <View style={styles.headerCardContent}>
+            <Text style={styles.headerCardTitle}>AI Pipeline</Text>
+            <Text style={styles.headerCardDesc}>6-node LangGraph orchestration</Text>
+          </View>
+        </View>
+
+        <View style={styles.pageHeader}>
         <Text style={styles.pageTitle}>AI Agents</Text>
         <Text style={styles.pageSubtitle}>LangGraph 6-node pipeline</Text>
       </View>
@@ -289,6 +298,7 @@ export default function AgentsScreen() {
 
       <View style={{ height: 32 }} />
     </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -447,4 +457,25 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   sampleRunText: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: Colors.white },
+  headerCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.surfaceBorder,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 20,
+  },
+  headerCardIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerCardContent: { flex: 1, gap: 2 },
+  headerCardTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: Colors.text },
+  headerCardDesc: { fontSize: 12, color: Colors.textSecondary, fontFamily: "Inter_400Regular" },
 });

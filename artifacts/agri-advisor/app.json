@@ -13,6 +13,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#0A0F0D"
     },
+    "extra": {
+      "apiUrl": "http://localhost:3000/api"
+    },
     "ios": {
       "supportsTablet": false
     },

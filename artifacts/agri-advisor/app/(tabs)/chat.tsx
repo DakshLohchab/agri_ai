@@ -5,21 +5,18 @@ import React from "react";
 import {
   Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "@/constants/colors";
 import { useChat } from "@/context/ChatContext";
 import { Swipeable } from "react-native-gesture-handler";
 
 export default function ChatListScreen() {
-  const insets = useSafeAreaInsets();
   const { conversations, createConversation, deleteConversation } = useChat();
-  const topPad = Platform.OS === "web" ? 67 : insets.top;
-  const botPad = Platform.OS === "web" ? 34 : insets.bottom;
 
   const handleNewChat = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -47,7 +44,7 @@ export default function ChatListScreen() {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: topPad }]}>
+    <SafeAreaView style={styles.container} edges={["left", "right", "top", "bottom"]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Conversations</Text>
         <Pressable
@@ -59,9 +56,18 @@ export default function ChatListScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.list, { paddingBottom: botPad + 80 }]}
+        contentContainerStyle={[styles.list, { paddingTop: 16, paddingBottom: 90 }]}
         showsVerticalScrollIndicator={false}
       >
+        <View style={styles.headerCard}>
+          <View style={[styles.headerCardIcon, { backgroundColor: Colors.intent + "22" }]}>
+            <Feather name="message-circle" size={24} color={Colors.intent} />
+          </View>
+          <View style={styles.headerCardContent}>
+            <Text style={styles.headerCardTitle}>Ask AgriAdvisor</Text>
+            <Text style={styles.headerCardDesc}>Get expert advice on farming, weather & markets</Text>
+          </View>
+        </View>
         {conversations.length === 0 ? (
           <View style={styles.empty}>
             <View style={styles.emptyIcon}>
@@ -122,7 +128,7 @@ export default function ChatListScreen() {
           })
         )}
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -217,4 +223,25 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     marginLeft: 8,
   },
+  headerCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.surfaceBorder,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 20,
+  },
+  headerCardIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerCardContent: { flex: 1, gap: 2 },
+  headerCardTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: Colors.text },
+  headerCardDesc: { fontSize: 12, color: Colors.textSecondary, fontFamily: "Inter_400Regular" },
 });

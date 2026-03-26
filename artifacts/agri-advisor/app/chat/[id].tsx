@@ -113,23 +113,60 @@ export default function ChatScreen() {
       >
         {messages.length === 0 ? (
           <View style={styles.emptyChat}>
-            <View style={styles.emptyChatIcon}>
-              <Feather name="feather" size={36} color={Colors.primary} />
-            </View>
-            <Text style={styles.emptyChatTitle}>Ask anything about farming</Text>
-            <Text style={styles.emptyChatDesc}>
-              Weather forecasts, mandi prices, pest control, government schemes — powered by 6 AI agents
-            </Text>
-            <View style={styles.suggestionRow}>
-              {["Rain this week?", "Wheat price today", "Pest alerts"].map((q) => (
-                <Pressable
-                  key={q}
-                  style={styles.suggestionChip}
-                  onPress={() => sendMessage(q)}
-                >
-                  <Text style={styles.suggestionText}>{q}</Text>
-                </Pressable>
-              ))}
+            <View style={styles.emptyContent}>
+              <View style={styles.emptyChatIcon}>
+                <Feather name="cpu" size={40} color={Colors.primary} />
+              </View>
+              <Text style={styles.emptyChatTitle}>AgriAdvisor AI</Text>
+              <Text style={styles.emptyChatDesc}>
+                Powered by 6 specialized AI agents working together
+              </Text>
+
+              <View style={styles.pipelineIndicator}>
+                <View style={[styles.pipelineStep, { backgroundColor: Colors.guardrails }]}>
+                  <Text style={styles.pipelineNumber}>1</Text>
+                </View>
+                <View style={styles.pipelineConnector} />
+                <View style={[styles.pipelineStep, { backgroundColor: Colors.intent }]}>
+                  <Text style={styles.pipelineNumber}>2</Text>
+                </View>
+                <View style={styles.pipelineConnector} />
+                <View style={[styles.pipelineStep, { backgroundColor: Colors.webSearch }]}>
+                  <Text style={styles.pipelineNumber}>3</Text>
+                </View>
+                <View style={styles.pipelineConnector} />
+                <View style={[styles.pipelineStep, { backgroundColor: Colors.weather }]}>
+                  <Text style={styles.pipelineNumber}>4</Text>
+                </View>
+              </View>
+
+              <View style={styles.pipelineIndicator}>
+                <View style={[styles.pipelineStep, { backgroundColor: Colors.market }]}>
+                  <Text style={styles.pipelineNumber}>5</Text>
+                </View>
+                <View style={styles.pipelineConnector} />
+                <View style={[styles.pipelineStep, { backgroundColor: Colors.synthesis }]}>
+                  <Text style={styles.pipelineNumber}>6</Text>
+                </View>
+                <View style={styles.pipelineConnectorEnd} />
+              </View>
+
+              <View style={styles.suggestionRow}>
+                {[
+                  { q: "Rain this week?", icon: "cloud-rain" },
+                  { q: "Wheat price", icon: "trending-up" },
+                  { q: "Pest alerts", icon: "alert-triangle" },
+                ].map(({ q, icon }) => (
+                  <Pressable
+                    key={q}
+                    style={styles.suggestionChip}
+                    onPress={() => sendMessage(q)}
+                  >
+                    <Feather name={icon as any} size={16} color={Colors.primary} />
+                    <Text style={styles.suggestionText}>{q}</Text>
+                  </Pressable>
+                ))}
+              </View>
             </View>
           </View>
         ) : (
@@ -195,10 +232,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.surfaceBorder,
+    borderBottomColor: Colors.primary + "22",
     gap: 12,
+    backgroundColor: Colors.primary + "08",
   },
   backBtn: {
     width: 40,
@@ -229,20 +267,24 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 32,
-    gap: 16,
+    paddingHorizontal: 24,
+  },
+  emptyContent: {
+    alignItems: "center",
+    gap: 20,
+    maxWidth: 320,
   },
   emptyChatIcon: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     backgroundColor: Colors.primary + "22",
-    borderWidth: 1.5,
+    borderWidth: 2,
     borderColor: Colors.primary + "44",
     alignItems: "center",
     justifyContent: "center",
   },
-  emptyChatTitle: { fontSize: 20, fontFamily: "Inter_600SemiBold", color: Colors.text, textAlign: "center" },
+  emptyChatTitle: { fontSize: 24, fontFamily: "Inter_700Bold", color: Colors.text, textAlign: "center" },
   emptyChatDesc: {
     fontSize: 14,
     color: Colors.textSecondary,
@@ -250,16 +292,57 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontFamily: "Inter_400Regular",
   },
-  suggestionRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "center" },
+  suggestionRow: { 
+    flexDirection: "row", 
+    gap: 10, 
+    justifyContent: "center",
+    marginTop: 12,
+  },
   suggestionChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
     paddingHorizontal: 16,
-    paddingVertical: 9,
+    paddingVertical: 11,
     backgroundColor: Colors.surface,
-    borderRadius: 20,
-    borderWidth: 1,
+    borderRadius: 24,
+    borderWidth: 1.5,
     borderColor: Colors.primary + "55",
   },
-  suggestionText: { fontSize: 13, color: Colors.primary, fontFamily: "Inter_500Medium" },
+  suggestionText: { 
+    fontSize: 13, 
+    color: Colors.primary, 
+    fontFamily: "Inter_600SemiBold" 
+  },
+  pipelineIndicator: { 
+    flexDirection: "row", 
+    alignItems: "center", 
+    justifyContent: "center",
+    gap: 0,
+    marginBottom: 8,
+  },
+  pipelineStep: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pipelineNumber: {
+    fontSize: 13,
+    fontFamily: "Inter_700Bold",
+    color: Colors.white,
+  },
+  pipelineConnector: {
+    width: 18,
+    height: 2,
+    backgroundColor: Colors.surfaceBorder,
+  },
+  pipelineConnectorEnd: {
+    width: 18,
+    height: 2,
+    backgroundColor: "transparent",
+  },
   messageList: { paddingTop: 12, paddingBottom: 12 },
   inputBar: {
     flexDirection: "row",

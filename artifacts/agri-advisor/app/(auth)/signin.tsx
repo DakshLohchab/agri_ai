@@ -18,36 +18,36 @@ import { useAuth } from "@/context/AuthContext";
 
 export default function SigninScreen() {
   const insets = useSafeAreaInsets();
-  const { signIn } = useAuth();
-  const [phone, setPhone] = useState("");
-  const [name, setName] = useState("");
+  const { login } = useAuth();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const botPad = Platform.OS === "web" ? 34 : insets.bottom;
 
   const handleSignIn = async () => {
-    if (!phone.trim() || !name.trim()) {
+    if (!email.trim() || !password.trim()) {
       setError("Please fill in all fields");
       return;
     }
+
+    if (!email.includes("@")) {
+      setError("Please enter a valid email");
+      return;
+    }
+
     setError("");
     setIsLoading(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
-      const userId = Date.now().toString() + Math.random().toString(36).substr(2, 6);
-      await signIn({
-        id: userId,
-        name: name.trim(),
-        phone: phone.trim(),
-        location: "India",
-        cropTypes: ["Wheat"],
-        language: "English",
-      });
+      await login(email.trim().toLowerCase(), password);
       router.replace("/(tabs)");
-    } catch (e) {
-      setError("Sign in failed. Please try again.");
+    } catch (e: any) {
+      setError(e.message || "Sign in failed. Please try again.");
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setIsLoading(false);
     }
@@ -74,26 +74,41 @@ export default function SigninScreen() {
 
           <View style={styles.fields}>
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Your Name</Text>
+              <Text style={styles.label}>Email</Text>
               <TextInput
                 style={styles.input}
-                placeholder="Full name"
+                placeholder="you@example.com"
                 placeholderTextColor={Colors.textMuted}
-                value={name}
-                onChangeText={(t) => { setName(t); setError(""); }}
-                autoCapitalize="words"
+                value={email}
+                onChangeText={(t) => { setEmail(t); setError(""); }}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                editable={!isLoading}
               />
             </View>
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Phone Number</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="+91 XXXXX XXXXX"
-                placeholderTextColor={Colors.textMuted}
-                value={phone}
-                onChangeText={(t) => { setPhone(t); setError(""); }}
-                keyboardType="phone-pad"
-              />
+              <Text style={styles.label}>Password</Text>
+              <View style={styles.passwordContainer}>
+                <TextInput
+                  style={[styles.input, { flex: 1 }]}
+                  placeholder="••••••••"
+                  placeholderTextColor={Colors.textMuted}
+                  value={password}
+                  onChangeText={(t) => { setPassword(t); setError(""); }}
+                  secureTextEntry={!showPassword}
+                  editable={!isLoading}
+                />
+                <Pressable
+                  onPress={() => setShowPassword(!showPassword)}
+                  style={styles.eyeIcon}
+                >
+                  <Feather
+                    name={showPassword ? "eye" : "eye-off"}
+                    size={18}
+                    color={Colors.textSecondary}
+                  />
+                </Pressable>
+              </View>
             </View>
           </View>
 
@@ -116,9 +131,10 @@ export default function SigninScreen() {
           <Pressable
             style={styles.switchBtn}
             onPress={() => router.replace("/(auth)/signup")}
+            disabled={isLoading}
           >
             <Text style={styles.switchText}>
-              New to AgriAdvisor?{" "}
+              Don't have an account?{" "}
               <Text style={styles.switchLink}>Create Account</Text>
             </Text>
           </Pressable>
@@ -148,37 +164,63 @@ const styles = StyleSheet.create({
   fieldGroup: { gap: 8 },
   label: { fontSize: 13, fontFamily: "Inter_500Medium", color: Colors.textSecondary },
   input: {
-    backgroundColor: Colors.surface,
-    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: Colors.surfaceBorder,
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    fontSize: 16,
+    backgroundColor: Colors.surface,
     color: Colors.text,
     fontFamily: "Inter_400Regular",
+    fontSize: 16,
+  },
+  passwordContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.surfaceBorder,
+    backgroundColor: Colors.surface,
+    paddingRight: 12,
+  },
+  eyeIcon: {
+    padding: 8,
   },
   errorBox: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    backgroundColor: Colors.error + "22",
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderRadius: 10,
-    padding: 12,
+    backgroundColor: "#fee2e2",
   },
-  errorText: { fontSize: 13, color: Colors.error, fontFamily: "Inter_400Regular" },
+  errorText: { color: Colors.error, fontFamily: "Inter_500Medium", fontSize: 14 },
   signinBtn: {
     backgroundColor: Colors.primary,
-    borderRadius: 16,
-    paddingVertical: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    borderRadius: 12,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    marginTop: 8,
+    justifyContent: "space-between",
+    shadowColor: Colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
   },
-  signinBtnText: { fontSize: 17, fontFamily: "Inter_600SemiBold", color: Colors.white },
-  switchBtn: { alignItems: "center" },
-  switchText: { fontSize: 14, color: Colors.textSecondary, fontFamily: "Inter_400Regular" },
+  signinBtnText: { 
+    color: Colors.white, 
+    fontFamily: "Inter_600SemiBold", 
+    fontSize: 16,
+    letterSpacing: 0.5,
+  },
+  switchBtn: { 
+    alignItems: "center",
+    paddingVertical: 12,
+    marginTop: 4,
+  },
+  switchText: { fontFamily: "Inter_400Regular", color: Colors.textSecondary, fontSize: 14 },
   switchLink: { color: Colors.primary, fontFamily: "Inter_600SemiBold" },
 });

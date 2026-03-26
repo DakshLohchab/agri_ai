@@ -40,6 +40,7 @@ artifacts-monorepo/
 **Path**: `artifacts/agri-advisor/`
 
 ### Features
+
 - **Sign Up / Sign In flows** — Beautiful onboarding with 3-step registration (name/phone, location, crops)
 - **Home Screen** — Personalized greeting, quick queries, mini pipeline visualization
 - **Ask AI Tab** — Conversation list with swipe-to-delete
@@ -49,7 +50,9 @@ artifacts-monorepo/
 - **AI Agents Tab** — Live LangGraph pipeline visualization with 5 edge-case demos
 
 ### LangGraph Architecture
+
 6-node state machine (`artifacts/agri-advisor/backend/langgraph_orchestrator.py`):
+
 1. **Guardrails** (Llama-3-8B) — Safety, off-domain blocking, ambiguity detection
 2. **Intent** (Mistral-7B) — Query routing + entity extraction
 3. **Web Search** (Qwen-14B) — Live pest alerts, scheme updates
@@ -58,6 +61,7 @@ artifacts-monorepo/
 6. **Synthesis** (Llama-3-70B) — Final multilingual advice with action steps
 
 ### Edge Case Demos (5 built-in)
+
 1. Off-Domain Block — detects non-agriculture queries
 2. Ambiguity Detection — requests clarification
 3. Weather API Fallback — graceful degradation
@@ -65,6 +69,7 @@ artifacts-monorepo/
 5. Low Confidence Escalation — escalates uncertain diagnoses
 
 ### Design
+
 - Dark green theme (`#0A0F0D` background, `#1DB954` primary)
 - Inter font family throughout
 - LangGraph native tabs (NativeTabs with liquid glass on iOS 26+)
@@ -74,7 +79,9 @@ artifacts-monorepo/
 ## Packages
 
 ### `artifacts/agri-advisor` (`@workspace/agri-advisor`)
+
 Expo 54 React Native app with:
+
 - `expo-router` — File-based routing
 - `expo-linear-gradient` — Gradient backgrounds
 - `expo-haptics` — Tactile feedback
@@ -84,10 +91,13 @@ Expo 54 React Native app with:
 - `AsyncStorage` — Local data persistence
 
 ### `artifacts/api-server` (`@workspace/api-server`)
+
 Express 5 API server (shared backend).
 
 ### `lib/db` (`@workspace/db`)
+
 Database layer using Drizzle ORM with PostgreSQL.
 
 ### `lib/api-spec` (`@workspace/api-spec`)
+
 OpenAPI spec + Orval codegen config.
