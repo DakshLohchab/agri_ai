@@ -1,0 +1,27 @@
+kind = "mobile"
+previewPath = "/"
+title = "AgriAdvisor AI"
+version = "1.0.0"
+id = "artifacts/agri-advisor"
+router = "expo-domain"
+
+[[integratedSkills]]
+name = "expo"
+version = "1.0.0"
+
+[[services]]
+ensurePreviewReachable = "/status"
+name = "expo"
+paths = [ "/" ]
+localPort = 21470
+
+[services.development]
+run = "pnpm --filter @workspace/agri-advisor run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/agri-advisor", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/agri-advisor", "run", "serve" ]
+
+[services.env]
+PORT = "21470"
+BASE_PATH = "/"
