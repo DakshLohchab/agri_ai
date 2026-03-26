@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import { Colors } from "@/constants/colors";
-import AuthService from "@/services/auth";
+import { AuthService } from "@/services/auth";
 
 export default function ChangePasswordScreen() {
   const [currentPassword, setCurrentPassword] = useState("");
@@ -125,7 +125,7 @@ export default function ChangePasswordScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.container} edges={["left", "right", "top", "bottom"]}>
+    <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Pressable
           style={styles.backBtn}
