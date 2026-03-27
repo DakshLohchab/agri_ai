@@ -1,3 +1,5 @@
+// app/_layout.tsx
+
 import {
   Inter_400Regular,
   Inter_500Medium,
@@ -16,6 +18,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AuthProvider } from "@/context/AuthContext";
 import { ChatProvider } from "@/context/ChatContext";
+import { LanguageProvider } from "@/context/LanguageContext";
 import { Colors } from "@/constants/colors";
 
 SplashScreen.preventAutoHideAsync();
@@ -24,11 +27,22 @@ const queryClient = new QueryClient();
 
 function RootLayoutNav() {
   return (
-    <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.background } }}>
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: Colors.background },
+      }}
+    >
       <Stack.Screen name="index" />
-      <Stack.Screen name="(auth)" options={{ presentation: "modal", headerShown: false }} />
+      <Stack.Screen
+        name="(auth)"
+        options={{ presentation: "modal", headerShown: false }}
+      />
       <Stack.Screen name="(tabs)" />
-      <Stack.Screen name="chat/[id]" options={{ presentation: "card", headerShown: false }} />
+      <Stack.Screen
+        name="chat/[id]"
+        options={{ presentation: "card", headerShown: false }}
+      />
     </Stack>
   );
 }
@@ -54,13 +68,18 @@ export default function RootLayout() {
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
-            <ChatProvider>
-              <GestureHandlerRootView style={{ flex: 1 }}>
-                <KeyboardProvider>
-                  <RootLayoutNav />
-                </KeyboardProvider>
-              </GestureHandlerRootView>
-            </ChatProvider>
+            {/* LanguageProvider sits inside AuthProvider (so it can later read
+                user preferences) but outside ChatProvider so conversations
+                can access the selected language if needed. */}
+            <LanguageProvider>
+              <ChatProvider>
+                <GestureHandlerRootView style={{ flex: 1 }}>
+                  <KeyboardProvider>
+                    <RootLayoutNav />
+                  </KeyboardProvider>
+                </GestureHandlerRootView>
+              </ChatProvider>
+            </LanguageProvider>
           </AuthProvider>
         </QueryClientProvider>
       </ErrorBoundary>

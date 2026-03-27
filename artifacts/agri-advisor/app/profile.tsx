@@ -1,8 +1,11 @@
+// app/profile.tsx
+
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import {
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   SafeAreaView,
@@ -15,27 +18,32 @@ import {
 import * as Haptics from "expo-haptics";
 import { Colors } from "@/constants/colors";
 import { useAuth } from "@/context/AuthContext";
-import AuthService from "@/services/auth";
+import { AuthService } from "@/services/auth";
+import { useLanguage } from "@/context/LanguageContext";
+import { LANGUAGES } from "@/constants/languages";
 
 export default function ProfileScreen() {
   const { user, logout } = useAuth();
+  const { language, setLanguage } = useLanguage();
+
   const [name, setName] = useState(user?.name || "");
-  const [email, setEmail] = useState(user?.email || "");
+  const [email] = useState(user?.email || "");
   const [location, setLocation] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [showLangModal, setShowLangModal] = useState(false);
+
+  // ─── Handlers ──────────────────────────────────────────────────────────────
 
   const handleSave = async () => {
     if (!name.trim()) {
       setError("Name is required");
       return;
     }
-
     setError("");
     setIsLoading(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
     try {
       await AuthService.updateProfile(name, location);
       setSuccess("Profile updated successfully");
@@ -59,13 +67,17 @@ export default function ProfileScreen() {
     }
   };
 
+  // ─── Render ────────────────────────────────────────────────────────────────
+
   return (
-    <SafeAreaView style={styles.container} edges={["left", "right", "top", "bottom"]}>
+    <SafeAreaView
+      style={styles.container}
+      // @ts-ignore — edges prop from react-native-safe-area-context
+      edges={["left", "right", "top", "bottom"]}
+    >
+      {/* ── Header ── */}
       <View style={styles.header}>
-        <Pressable
-          style={styles.backBtn}
-          onPress={() => router.back()}
-        >
+        <Pressable style={styles.backBtn} onPress={() => router.back()}>
           <Feather name="arrow-left" size={20} color={Colors.text} />
         </Pressable>
         <Text style={styles.headerTitle}>Edit Profile</Text>
@@ -81,7 +93,7 @@ export default function ProfileScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Profile Avatar */}
+          {/* ── Avatar ── */}
           <View style={styles.avatarSection}>
             <View style={styles.avatarContainer}>
               <View style={styles.avatar}>
@@ -94,8 +106,9 @@ export default function ProfileScreen() {
             <Text style={styles.avatarLabel}>Add Profile Photo</Text>
           </View>
 
-          {/* Form Fields */}
+          {/* ── Form Fields ── */}
           <View style={styles.formSection}>
+            {/* Full Name */}
             <View style={styles.fieldGroup}>
               <Text style={styles.label}>Full Name</Text>
               <View style={styles.inputContainer}>
@@ -121,6 +134,7 @@ export default function ProfileScreen() {
               </View>
             </View>
 
+            {/* Email (read-only) */}
             <View style={styles.fieldGroup}>
               <Text style={styles.label}>Email Address</Text>
               <View style={[styles.inputContainer, styles.inputDisabled]}>
@@ -139,6 +153,7 @@ export default function ProfileScreen() {
               <Text style={styles.helpText}>Email cannot be changed</Text>
             </View>
 
+            {/* Location */}
             <View style={styles.fieldGroup}>
               <Text style={styles.label}>Location</Text>
               <View style={styles.inputContainer}>
@@ -165,22 +180,54 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          {/* Status Messages */}
-          {error && (
+          {/* ── Status Messages ── */}
+          {error ? (
             <View style={styles.errorBox}>
               <Feather name="alert-circle" size={16} color={Colors.error} />
               <Text style={styles.errorText}>{error}</Text>
             </View>
-          )}
+          ) : null}
 
-          {success && (
+          {success ? (
             <View style={styles.successBox}>
               <Feather name="check-circle" size={16} color={Colors.success} />
               <Text style={styles.successText}>{success}</Text>
             </View>
-          )}
+          ) : null}
 
-          {/* Account Section */}
+          {/* ── Language / भाषा ── */}
+          <View style={styles.sectionSpacer} />
+          <Text style={styles.sectionTitle}>Language / भाषा</Text>
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.settingsRow,
+              { opacity: pressed ? 0.8 : 1 },
+            ]}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setShowLangModal(true);
+            }}
+          >
+            <View style={styles.btnContent}>
+              <View style={styles.settingsIconWrap}>
+                <Feather name="globe" size={18} color={Colors.primary} />
+              </View>
+              <View style={styles.settingsTextWrap}>
+                <Text style={styles.settingsNativeName}>
+                  {language.nativeName}
+                </Text>
+                <Text style={styles.settingsEnglishName}>{language.name}</Text>
+              </View>
+            </View>
+            <Feather
+              name="chevron-right"
+              size={18}
+              color={Colors.textSecondary}
+            />
+          </Pressable>
+
+          {/* ── Account ── */}
           <View style={styles.sectionSpacer} />
           <Text style={styles.sectionTitle}>Account</Text>
 
@@ -199,10 +246,14 @@ export default function ProfileScreen() {
               <Feather name="lock" size={18} color={Colors.primary} />
               <Text style={styles.btnText}>Change Password</Text>
             </View>
-            <Feather name="arrow-right" size={18} color={Colors.textSecondary} />
+            <Feather
+              name="arrow-right"
+              size={18}
+              color={Colors.textSecondary}
+            />
           </Pressable>
 
-          {/* Actions */}
+          {/* ── Actions ── */}
           <View style={styles.actionButtons}>
             <Pressable
               style={({ pressed }) => [
@@ -231,9 +282,64 @@ export default function ProfileScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* ── Language Picker Modal ── */}
+      <Modal
+        visible={showLangModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowLangModal(false)}
+      >
+        {/* Tap outside to dismiss */}
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setShowLangModal(false)}
+        />
+
+        <View style={styles.modalSheet}>
+          {/* Handle bar */}
+          <View style={styles.sheetHandle} />
+
+          <Text style={styles.sheetTitle}>Select Language / भाषा चुनें</Text>
+
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.sheetList}
+          >
+            {LANGUAGES.map((lang) => {
+              const isSelected = lang.code === language.code;
+              return (
+                <Pressable
+                  key={lang.code}
+                  style={({ pressed }) => [
+                    styles.langRow,
+                    isSelected && styles.langRowSelected,
+                    { opacity: pressed ? 0.8 : 1 },
+                  ]}
+                  onPress={async () => {
+                    Haptics.selectionAsync();
+                    await setLanguage(lang);
+                    setShowLangModal(false);
+                  }}
+                >
+                  <View style={styles.langRowText}>
+                    <Text style={styles.langNativeName}>{lang.nativeName}</Text>
+                    <Text style={styles.langEnglishName}>{lang.name}</Text>
+                  </View>
+                  {isSelected ? (
+                    <Feather name="check" size={18} color={Colors.success} />
+                  ) : null}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   container: {
@@ -267,7 +373,7 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 24,
     paddingVertical: 24,
-    paddingBottom: 32,
+    paddingBottom: 48,
   },
   avatarSection: {
     alignItems: "center",
@@ -394,6 +500,41 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     marginLeft: 4,
   },
+  // Language row (same visual style as changePasswordBtn)
+  settingsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.surfaceBorder,
+    marginBottom: 16,
+  },
+  settingsIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.primary + "22",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 12,
+  },
+  settingsTextWrap: {
+    gap: 1,
+  },
+  settingsNativeName: {
+    fontSize: 15,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.text,
+  },
+  settingsEnglishName: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: Colors.textSecondary,
+  },
   changePasswordBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -455,5 +596,69 @@ const styles = StyleSheet.create({
     color: Colors.error,
     fontFamily: "Inter_600SemiBold",
     fontSize: 15,
+  },
+  // ── Language Modal ──────────────────────────────────────────────────────────
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+  },
+  modalSheet: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: "75%",
+    paddingBottom: 32,
+  },
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.surfaceBorder,
+    alignSelf: "center",
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  sheetTitle: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.text,
+    textAlign: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.surfaceBorder,
+    marginBottom: 8,
+  },
+  sheetList: {
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+  },
+  langRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    marginBottom: 4,
+  },
+  langRowSelected: {
+    backgroundColor: Colors.primary + "18",
+  },
+  langRowText: {
+    gap: 2,
+  },
+  langNativeName: {
+    fontSize: 17,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.text,
+  },
+  langEnglishName: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: Colors.textSecondary,
   },
 });

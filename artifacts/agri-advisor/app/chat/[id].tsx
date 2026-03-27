@@ -1,8 +1,16 @@
+// app/chat/[id].tsx
+
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
+  Animated,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -20,6 +28,16 @@ import { MessageBubble } from "@/components/MessageBubble";
 import { TypingIndicator } from "@/components/TypingIndicator";
 import { useChat, Message, AgentStep } from "@/context/ChatContext";
 import { runAgentQuery } from "@/services/langgraph";
+import { useLanguage } from "@/context/LanguageContext";
+import { getTranslations } from "@/constants/translations";
+import {
+  cancelRecording,
+  requestMicrophonePermission,
+  startRecording,
+  stopRecordingAndTranscribe,
+} from "@/services/voiceService";
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const PIPELINE_COLORS = [
   Colors.guardrails,
@@ -30,18 +48,19 @@ const PIPELINE_COLORS = [
   Colors.synthesis,
 ];
 
-const SUGGESTIONS = [
-  { q: "Rain this week in Punjab?", icon: "cloud-rain" },
-  { q: "Wheat mandi price today", icon: "trending-up" },
-  { q: "Pest alert for cotton", icon: "alert-triangle" },
-  { q: "PM-KISAN eligibility", icon: "file-text" },
-  { q: "Soybean price in MP", icon: "package" },
-  { q: "Fertilizer dosage for rice", icon: "droplet" },
-];
+// Voice state machine
+type VoiceState = "idle" | "recording" | "transcribing" | "error";
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function ChatScreen() {
-  const { id, preQuery } = useLocalSearchParams<{ id: string; preQuery?: string }>();
+  const { id, preQuery } = useLocalSearchParams<{
+    id: string;
+    preQuery?: string;
+  }>();
   const { getConversation, addMessage, updateMessage } = useChat();
+  const { language } = useLanguage();
+  const t = getTranslations(language.code);
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const isWeb = Platform.OS === "web";
@@ -49,20 +68,89 @@ export default function ChatScreen() {
 
   const [inputText, setInputText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [voiceState, setVoiceState] = useState<VoiceState>("idle");
+  const [voiceError, setVoiceError] = useState("");
+
   const flatRef = useRef<FlatList>(null);
   const inputRef = useRef<TextInput>(null);
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Pulsing animation for the recording mic button
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const pulseLoop = useRef<Animated.CompositeAnimation | null>(null);
 
   const conversation = getConversation(id);
   const messages = conversation?.messages ?? [];
 
   const botPad = isWeb ? 24 : insets.bottom;
   const topPad = isWeb ? 0 : insets.top;
+  const maxContentWidth = isWeb && isWide ? 800 : undefined;
+
+  // Suggestions built from translations
+  const SUGGESTIONS = [
+    { q: t.suggestionRain,       icon: "cloud-rain" },
+    { q: t.suggestionWheat,      icon: "trending-up" },
+    { q: t.suggestionPest,       icon: "alert-triangle" },
+    { q: t.suggestionPmKisan,    icon: "file-text" },
+    { q: t.suggestionSoybean,    icon: "package" },
+    { q: t.suggestionFertilizer, icon: "droplet" },
+  ];
+
+  // ── Pulse animation lifecycle ──────────────────────────────────────────────
+
+  useEffect(() => {
+    if (voiceState === "recording") {
+      pulseLoop.current = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.2,
+            duration: 600,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 600,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      pulseLoop.current.start();
+    } else {
+      pulseLoop.current?.stop();
+      pulseAnim.setValue(1);
+    }
+  }, [voiceState]);
+
+  // ── Auto-clear error strip after 4 s ──────────────────────────────────────
+
+  const showVoiceError = useCallback((msg: string) => {
+    setVoiceError(msg);
+    setVoiceState("error");
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    errorTimerRef.current = setTimeout(() => {
+      setVoiceState("idle");
+      setVoiceError("");
+    }, 4000);
+  }, []);
+
+  // Cleanup timer on unmount
+  useEffect(
+    () => () => {
+      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+      cancelRecording().catch(() => {});
+    },
+    []
+  );
+
+  // ── Pre-filled query from home screen ─────────────────────────────────────
 
   useEffect(() => {
     if (preQuery && messages.length === 0) {
       sendMessage(preQuery);
     }
   }, []);
+
+  // ── Chat send ──────────────────────────────────────────────────────────────
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -83,7 +171,8 @@ export default function ChatScreen() {
       addMessage(id, userMsg);
       setIsTyping(true);
 
-      const aiMsgId = (Date.now() + 1).toString() + Math.random().toString(36).substr(2, 5);
+      const aiMsgId =
+        (Date.now() + 1).toString() + Math.random().toString(36).substr(2, 5);
       const aiMsg: Message = {
         id: aiMsgId,
         role: "assistant",
@@ -107,25 +196,93 @@ export default function ChatScreen() {
             }
           }
         );
-      } catch (err) {
+      } catch {
         updateMessage(id, aiMsgId, {
-          content: "Sorry, something went wrong processing your query. Please try again.",
+          content: t.chatErrorMessage,
           agentSteps: [],
         });
         setIsTyping(false);
       }
     },
-    [id, isTyping, addMessage, updateMessage]
+    [id, isTyping, addMessage, updateMessage, t]
   );
 
+  // ── Voice button handler ───────────────────────────────────────────────────
+
+  const handleMicPress = useCallback(async () => {
+    if (voiceState === "transcribing") return;
+
+    if (voiceState === "recording") {
+      setVoiceState("transcribing");
+      try {
+        const text = await stopRecordingAndTranscribe(language.whisperCode);
+        if (text) {
+          setInputText((prev) => (prev ? `${prev} ${text}` : text));
+        }
+        setVoiceState("idle");
+      } catch (err: any) {
+        showVoiceError(err?.message ?? "Transcription failed. Please try again.");
+      }
+      return;
+    }
+
+    if (voiceState === "idle" || voiceState === "error") {
+      const granted = await requestMicrophonePermission();
+      if (!granted) {
+        showVoiceError("Microphone permission denied.");
+        return;
+      }
+      try {
+        await startRecording();
+        setVoiceState("recording");
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      } catch (err: any) {
+        showVoiceError(err?.message ?? "Could not start recording.");
+      }
+    }
+  }, [voiceState, language.whisperCode, showVoiceError]);
+
+  const handleCancelRecording = useCallback(async () => {
+    await cancelRecording();
+    setVoiceState("idle");
+    setVoiceError("");
+  }, []);
+
+  // ─── Render ───────────────────────────────────────────────────────────────
+
   const reversedMessages = [...messages].reverse();
-  const maxContentWidth = isWeb && isWide ? 800 : undefined;
+
+  const micIcon =
+    voiceState === "recording"
+      ? "mic-off"
+      : voiceState === "transcribing"
+      ? "loader"
+      : "mic";
+
+  const micBgColor =
+    voiceState === "recording"
+      ? "#FF3B3022"
+      : Colors.surfaceElevated;
+
+  const micIconColor =
+    voiceState === "recording"
+      ? "#FF3B30"
+      : voiceState === "transcribing"
+      ? Colors.textMuted
+      : Colors.textSecondary;
 
   return (
     <View style={[styles.container, { paddingTop: topPad }]}>
       {/* ── Header ── */}
       <View style={[styles.header, isWeb && isWide && styles.headerWide]}>
-        <View style={[styles.headerInner, maxContentWidth ? { maxWidth: maxContentWidth, alignSelf: "center", width: "100%" } : null]}>
+        <View
+          style={[
+            styles.headerInner,
+            maxContentWidth
+              ? { maxWidth: maxContentWidth, alignSelf: "center", width: "100%" }
+              : null,
+          ]}
+        >
           <Pressable style={styles.backBtn} onPress={() => router.back()}>
             <Feather name="arrow-left" size={20} color={Colors.text} />
           </Pressable>
@@ -135,7 +292,7 @@ export default function ChatScreen() {
             </Text>
             <View style={styles.headerBadge}>
               <View style={styles.activeDot} />
-              <Text style={styles.headerSubtitle}>6-agent LangGraph pipeline</Text>
+              <Text style={styles.headerSubtitle}>{t.chatHeaderSubtitle}</Text>
             </View>
           </View>
           <Pressable
@@ -156,20 +313,28 @@ export default function ChatScreen() {
           /* ── Empty state ── */
           <ScrollView
             style={{ flex: 1 }}
-            contentContainerStyle={[styles.emptyScroll, isWeb && isWide && { paddingHorizontal: 40 }]}
+            contentContainerStyle={[
+              styles.emptyScroll,
+              isWeb && isWide && { paddingHorizontal: 40 },
+            ]}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            <View style={[styles.emptyContent, maxContentWidth ? { maxWidth: maxContentWidth, alignSelf: "center", width: "100%" } : null]}>
+            <View
+              style={[
+                styles.emptyContent,
+                maxContentWidth
+                  ? { maxWidth: maxContentWidth, alignSelf: "center", width: "100%" }
+                  : null,
+              ]}
+            >
               <View style={styles.emptyChatIcon}>
                 <Feather name="cpu" size={40} color={Colors.primary} />
               </View>
-              <Text style={styles.emptyChatTitle}>AgriAdvisor AI</Text>
-              <Text style={styles.emptyChatDesc}>
-                Powered by 6 specialized AI agents — Llama-3-8B, Mistral-7B, Qwen-14B, and Llama-3-70B — with live weather and market data
-              </Text>
+              <Text style={styles.emptyChatTitle}>{t.chatEmptyTitle}</Text>
+              <Text style={styles.emptyChatDesc}>{t.chatEmptyDesc}</Text>
 
-              {/* Pipeline nodes */}
+              {/* Pipeline steps */}
               <View style={styles.pipelineRow}>
                 {PIPELINE_COLORS.map((color, i) => (
                   <React.Fragment key={i}>
@@ -183,7 +348,7 @@ export default function ChatScreen() {
                 ))}
               </View>
 
-              {/* Suggestion chips — wrap on wide screens */}
+              {/* Suggestion chips */}
               <View style={[styles.suggestionGrid, isWide && styles.suggestionGridWide]}>
                 {SUGGESTIONS.map(({ q, icon }) => (
                   <Pressable
@@ -197,13 +362,13 @@ export default function ChatScreen() {
                 ))}
               </View>
 
-              {/* Feature pills */}
+              {/* Feature pills — kept in English as they are brand/product terms */}
               <View style={styles.featureRow}>
                 {[
-                  { label: "Live weather", icon: "cloud" },
+                  { label: "Live weather",     icon: "cloud" },
                   { label: "AGMARKNET prices", icon: "trending-up" },
-                  { label: "Pest diagnosis", icon: "alert-triangle" },
-                  { label: "Gov schemes", icon: "shield" },
+                  { label: "Pest diagnosis",   icon: "alert-triangle" },
+                  { label: "Gov schemes",      icon: "shield" },
                 ].map((f) => (
                   <View key={f.label} style={styles.featurePill}>
                     <Feather name={f.icon as any} size={11} color={Colors.textMuted} />
@@ -225,7 +390,13 @@ export default function ChatScreen() {
               }
               if (item.content === "" && item.role === "assistant") return null;
               return (
-                <View style={maxContentWidth ? { maxWidth: maxContentWidth, alignSelf: "center", width: "100%" } : undefined}>
+                <View
+                  style={
+                    maxContentWidth
+                      ? { maxWidth: maxContentWidth, alignSelf: "center", width: "100%" }
+                      : undefined
+                  }
+                >
                   <MessageBubble message={item} />
                 </View>
               );
@@ -238,32 +409,98 @@ export default function ChatScreen() {
             keyboardDismissMode="interactive"
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
-            ListHeaderComponent={isTyping ? (
-              <View style={maxContentWidth ? { maxWidth: maxContentWidth, alignSelf: "center", width: "100%" } : undefined}>
-                <TypingIndicator />
-              </View>
-            ) : null}
+            ListHeaderComponent={
+              isTyping ? (
+                <View
+                  style={
+                    maxContentWidth
+                      ? { maxWidth: maxContentWidth, alignSelf: "center", width: "100%" }
+                      : undefined
+                  }
+                >
+                  <TypingIndicator />
+                </View>
+              ) : null
+            }
           />
+        )}
+
+        {/* ── Voice status strip ── */}
+        {voiceState !== "idle" && (
+          <View
+            style={[
+              styles.voiceStrip,
+              voiceState === "recording" && styles.voiceStripRecording,
+              voiceState === "error"     && styles.voiceStripError,
+            ]}
+          >
+            {voiceState === "recording" && (
+              <>
+                <View style={styles.voiceRedDot} />
+                <Text style={styles.voiceStripText} numberOfLines={1}>
+                  {t.voiceRecording} ({language.nativeName})
+                </Text>
+                <Pressable style={styles.voiceCancelBtn} onPress={handleCancelRecording}>
+                  <Text style={styles.voiceCancelText}>{t.voiceCancel}</Text>
+                </Pressable>
+              </>
+            )}
+            {voiceState === "transcribing" && (
+              <>
+                <Feather name="loader" size={14} color={Colors.primary} />
+                <Text style={styles.voiceStripText}>{t.voiceTranscribing}</Text>
+              </>
+            )}
+            {voiceState === "error" && (
+              <>
+                <Feather name="alert-circle" size={14} color={Colors.error} />
+                <Text style={[styles.voiceStripText, { color: Colors.error }]} numberOfLines={2}>
+                  {voiceError}
+                </Text>
+              </>
+            )}
+          </View>
         )}
 
         {/* ── Input bar ── */}
         <View style={[styles.inputBarWrap, { paddingBottom: botPad + 8 }]}>
-          <View style={[
-            styles.inputBar,
-            isWeb && isWide && { maxWidth: maxContentWidth, alignSelf: "center", width: "100%" },
-          ]}>
+          <View
+            style={[
+              styles.inputBar,
+              isWeb && isWide && {
+                maxWidth: maxContentWidth,
+                alignSelf: "center",
+                width: "100%",
+              },
+            ]}
+          >
+            {/* Mic button — mobile only */}
+            {!isWeb && (
+              <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+                <Pressable
+                  style={[styles.micBtn, { backgroundColor: micBgColor }]}
+                  onPress={handleMicPress}
+                  disabled={isTyping}
+                >
+                  <Feather name={micIcon as any} size={18} color={micIconColor} />
+                </Pressable>
+              </Animated.View>
+            )}
+
             <TextInput
               ref={inputRef}
-              style={[styles.input, isWeb && { outlineWidth: 0 } as any]}
+              style={[styles.input, isWeb && ({ outlineWidth: 0 } as any)]}
               value={inputText}
               onChangeText={setInputText}
-              placeholder="Ask about crops, weather, mandi prices..."
+              placeholder={t.inputPlaceholder}
               placeholderTextColor={Colors.textMuted}
               multiline
               maxLength={500}
-              onSubmitEditing={Platform.OS === "web" ? undefined : () => sendMessage(inputText)}
+              onSubmitEditing={
+                Platform.OS === "web" ? undefined : () => sendMessage(inputText)
+              }
               returnKeyType={Platform.OS === "web" ? "default" : "send"}
-              editable={!isTyping}
+              editable={!isTyping && voiceState !== "transcribing"}
               onKeyPress={
                 Platform.OS === "web"
                   ? (e: any) => {
@@ -275,12 +512,16 @@ export default function ChatScreen() {
                   : undefined
               }
             />
+
+            {/* Send button */}
             <Pressable
               style={({ pressed }) => [
                 styles.sendBtn,
                 {
                   backgroundColor:
-                    inputText.trim() && !isTyping ? Colors.primary : Colors.surfaceElevated,
+                    inputText.trim() && !isTyping
+                      ? Colors.primary
+                      : Colors.surfaceElevated,
                   opacity: pressed ? 0.8 : 1,
                 },
               ]}
@@ -294,8 +535,14 @@ export default function ChatScreen() {
               />
             </Pressable>
           </View>
-          {isWeb && (
-            <Text style={styles.webHint}>Press Enter to send · Shift+Enter for new line</Text>
+
+          {/* Web: keyboard hint / Mobile: voice language hint */}
+          {isWeb ? (
+            <Text style={styles.webHint}>{t.webHint}</Text>
+          ) : (
+            <Text style={styles.voiceHint}>
+              {t.voiceInputHint}: {language.nativeName} ({language.name})
+            </Text>
           )}
         </View>
       </KeyboardAvoidingView>
@@ -303,17 +550,16 @@ export default function ChatScreen() {
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-
   header: {
     borderBottomWidth: 1,
     borderBottomColor: Colors.primary + "22",
     backgroundColor: Colors.primary + "08",
   },
-  headerWide: {
-    paddingHorizontal: 24,
-  },
+  headerWide: { paddingHorizontal: 24 },
   headerInner: {
     flexDirection: "row",
     alignItems: "center",
@@ -346,7 +592,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.primary + "44",
   },
-
   emptyScroll: { flexGrow: 1, justifyContent: "center", paddingVertical: 32, paddingHorizontal: 24 },
   emptyContent: { alignItems: "center", gap: 20 },
   emptyChatIcon: {
@@ -368,18 +613,10 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     maxWidth: 360,
   },
-
   pipelineRow: { flexDirection: "row", alignItems: "center", justifyContent: "center" },
-  pipelineStep: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  pipelineStep: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
   pipelineNumber: { fontSize: 13, fontFamily: "Inter_700Bold", color: Colors.white },
   pipelineConnector: { width: 20, height: 2, backgroundColor: Colors.surfaceBorder },
-
   suggestionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, justifyContent: "center" },
   suggestionGridWide: { maxWidth: 680 },
   suggestionChip: {
@@ -395,7 +632,6 @@ const styles = StyleSheet.create({
   },
   suggestionChipWide: { paddingHorizontal: 18 },
   suggestionText: { fontSize: 13, color: Colors.primary, fontFamily: "Inter_600SemiBold" },
-
   featureRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "center" },
   featurePill: {
     flexDirection: "row",
@@ -409,9 +645,23 @@ const styles = StyleSheet.create({
     borderColor: Colors.surfaceBorder,
   },
   featurePillText: { fontSize: 11, color: Colors.textMuted, fontFamily: "Inter_400Regular" },
-
   messageList: { paddingTop: 12, paddingBottom: 12, paddingHorizontal: 16 },
-
+  voiceStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: Colors.surfaceElevated,
+    borderTopWidth: 1,
+    borderTopColor: Colors.surfaceBorder,
+  },
+  voiceStripRecording: { backgroundColor: "#FF3B3011", borderTopColor: "#FF3B3033" },
+  voiceStripError: { backgroundColor: Colors.error + "11", borderTopColor: Colors.error + "33" },
+  voiceRedDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#FF3B30" },
+  voiceStripText: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.textSecondary },
+  voiceCancelBtn: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, backgroundColor: Colors.surfaceBorder },
+  voiceCancelText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.text },
   inputBarWrap: {
     borderTopWidth: 1,
     borderTopColor: Colors.surfaceBorder,
@@ -420,11 +670,8 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     gap: 6,
   },
-  inputBar: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    gap: 10,
-  },
+  inputBar: { flexDirection: "row", alignItems: "flex-end", gap: 10 },
+  micBtn: { width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center" },
   input: {
     flex: 1,
     backgroundColor: Colors.surface,
@@ -439,17 +686,7 @@ const styles = StyleSheet.create({
     maxHeight: 120,
     minHeight: 48,
   },
-  sendBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  webHint: {
-    fontSize: 11,
-    color: Colors.textMuted,
-    fontFamily: "Inter_400Regular",
-    textAlign: "center",
-  },
+  sendBtn: { width: 48, height: 48, borderRadius: 24, alignItems: "center", justifyContent: "center" },
+  webHint: { fontSize: 11, color: Colors.textMuted, fontFamily: "Inter_400Regular", textAlign: "center" },
+  voiceHint: { fontSize: 11, color: Colors.textMuted, fontFamily: "Inter_400Regular", textAlign: "center" },
 });

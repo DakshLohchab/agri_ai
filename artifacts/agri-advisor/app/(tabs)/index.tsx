@@ -14,28 +14,33 @@ import {
 import { Colors } from "@/constants/colors";
 import { useAuth } from "@/context/AuthContext";
 import { useChat } from "@/context/ChatContext";
-
-const QUICK_QUERIES = [
-  { icon: "cloud-rain", label: "Rain forecast\nthis week", color: Colors.weather },
-  { icon: "trending-up", label: "Wheat mandi\nprice today", color: Colors.market },
-  { icon: "alert-triangle", label: "Pest alerts\nnear me", color: Colors.guardrails },
-  { icon: "file-text", label: "PM-KISAN\neligibility", color: Colors.intent },
-  { icon: "droplets", label: "Irrigation\nschedule", color: Colors.synthesis },
-  { icon: "package", label: "Fertilizer\ndosage", color: Colors.secondary },
-];
+import { useLanguage } from "@/context/LanguageContext";
+import { getTranslations } from "@/constants/translations";
 
 const AGENT_PIPELINE = [
   { name: "Guardrails", color: Colors.guardrails, icon: "shield" },
-  { name: "Intent", color: Colors.intent, icon: "zap" },
-  { name: "Web Search", color: Colors.webSearch, icon: "globe" },
-  { name: "Weather", color: Colors.weather, icon: "cloud" },
-  { name: "Market", color: Colors.market, icon: "trending-up" },
-  { name: "Synthesis", color: Colors.synthesis, icon: "cpu" },
+  { name: "Intent",     color: Colors.intent,     icon: "zap" },
+  { name: "Web Search", color: Colors.webSearch,  icon: "globe" },
+  { name: "Weather",    color: Colors.weather,    icon: "cloud" },
+  { name: "Market",     color: Colors.market,     icon: "trending-up" },
+  { name: "Synthesis",  color: Colors.synthesis,  icon: "cpu" },
 ];
 
 export default function HomeScreen() {
-  const { user, signOut } = useAuth();
+  const { user } = useAuth();
   const { createConversation } = useChat();
+  const { language } = useLanguage();
+  const t = getTranslations(language.code);
+
+  // Quick queries built from translations so labels update with language
+  const QUICK_QUERIES = [
+    { icon: "cloud-rain",      label: t.rainForecast,    color: Colors.weather },
+    { icon: "trending-up",     label: t.wheatMandi,      color: Colors.market },
+    { icon: "alert-triangle",  label: t.pestAlerts,      color: Colors.guardrails },
+    { icon: "file-text",       label: t.pmKisan,         color: Colors.intent },
+    { icon: "droplet",         label: t.irrigation,      color: Colors.synthesis },
+    { icon: "package",         label: t.fertilizerDosage, color: Colors.secondary },
+  ];
 
   const handleQuickQuery = (label: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -51,9 +56,9 @@ export default function HomeScreen() {
 
   const greeting = () => {
     const hour = new Date().getHours();
-    if (hour < 12) return "Good Morning";
-    if (hour < 17) return "Good Afternoon";
-    return "Good Evening";
+    if (hour < 12) return t.goodMorning;
+    if (hour < 17) return t.goodAfternoon;
+    return t.goodEvening;
   };
 
   return (
@@ -64,87 +69,83 @@ export default function HomeScreen() {
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
       >
-      <View style={styles.headerRow}>
-        <View style={styles.greetingBlock}>
-          <Text style={styles.greeting}>{greeting()},</Text>
-          <Text style={styles.name}>{user?.name?.split(" ")[0] ?? "Farmer"}</Text>
-          <View style={styles.locationRow}>
-            <Feather name="map-pin" size={12} color={Colors.textMuted} />
-            <Text style={styles.location}>{user?.location ?? "India"}</Text>
+        <View style={styles.headerRow}>
+          <View style={styles.greetingBlock}>
+            <Text style={styles.greeting}>{greeting()},</Text>
+            <Text style={styles.name}>{user?.name?.split(" ")[0] ?? "Farmer"}</Text>
+            <View style={styles.locationRow}>
+              <Feather name="map-pin" size={12} color={Colors.textMuted} />
+              <Text style={styles.location}>{user?.location ?? "India"}</Text>
+            </View>
           </View>
+          <Pressable style={styles.avatarBtn} onPress={() => router.push("/profile")}>
+            <View style={styles.avatar}>
+              <Feather name="user" size={20} color={Colors.primary} />
+            </View>
+          </Pressable>
         </View>
-        <Pressable style={styles.avatarBtn} onPress={() => router.push("/profile")}>
-          <View style={styles.avatar}>
-            <Feather name="user" size={20} color={Colors.primary} />
+
+        <Pressable
+          style={({ pressed }) => [styles.askCard, { opacity: pressed ? 0.9 : 1 }]}
+          onPress={handleNewChat}
+        >
+          <View style={styles.askCardInner}>
+            <View style={styles.askIconContainer}>
+              <Feather name="cpu" size={22} color={Colors.primary} />
+            </View>
+            <View style={styles.askTextContainer}>
+              <Text style={styles.askTitle}>{t.askTitle}</Text>
+              <Text style={styles.askSubtitle}>{t.askSubtitle}</Text>
+            </View>
+            <Feather name="arrow-right" size={18} color={Colors.textSecondary} />
+          </View>
+          <View style={styles.pipelineMini}>
+            {AGENT_PIPELINE.map((node, i) => (
+              <React.Fragment key={node.name}>
+                <View style={[styles.miniNode, { backgroundColor: node.color + "33", borderColor: node.color + "66" }]}>
+                  <Feather name={node.icon as any} size={10} color={node.color} />
+                </View>
+                {i < AGENT_PIPELINE.length - 1 && <View style={styles.miniArrow} />}
+              </React.Fragment>
+            ))}
           </View>
         </Pressable>
-      </View>
 
-      <Pressable
-        style={({ pressed }) => [styles.askCard, { opacity: pressed ? 0.9 : 1 }]}
-        onPress={handleNewChat}
-      >
-        <View style={styles.askCardInner}>
-          <View style={styles.askIconContainer}>
-            <Feather name="cpu" size={22} color={Colors.primary} />
-          </View>
-          <View style={styles.askTextContainer}>
-            <Text style={styles.askTitle}>Ask AgriAdvisor AI</Text>
-            <Text style={styles.askSubtitle}>Weather, market prices, pest control...</Text>
-          </View>
-          <Feather name="arrow-right" size={18} color={Colors.textSecondary} />
-        </View>
-        <View style={styles.pipelineMini}>
-          {AGENT_PIPELINE.map((node, i) => (
-            <React.Fragment key={node.name}>
-              <View style={[styles.miniNode, { backgroundColor: node.color + "33", borderColor: node.color + "66" }]}>
-                <Feather name={node.icon as any} size={10} color={node.color} />
+        <Text style={styles.sectionTitle}>{t.quickQueries}</Text>
+        <View style={styles.quickGrid}>
+          {QUICK_QUERIES.map((q, i) => (
+            <Pressable
+              key={i}
+              style={({ pressed }) => [
+                styles.quickCard,
+                {
+                  borderColor: q.color + "44",
+                  backgroundColor: q.color + "11",
+                  opacity: pressed ? 0.8 : 1,
+                },
+              ]}
+              onPress={() => handleQuickQuery(q.label)}
+            >
+              <View style={[styles.quickIconContainer, { backgroundColor: q.color + "22" }]}>
+                <Feather name={q.icon as any} size={20} color={q.color} />
               </View>
-              {i < AGENT_PIPELINE.length - 1 && (
-                <View style={styles.miniArrow} />
-              )}
-            </React.Fragment>
+              <Text style={[styles.quickLabel, { color: q.color }]}>{q.label}</Text>
+            </Pressable>
           ))}
         </View>
-      </Pressable>
 
-      <Text style={styles.sectionTitle}>Quick Queries</Text>
-      <View style={styles.quickGrid}>
-        {QUICK_QUERIES.map((q, i) => (
+        <Text style={styles.sectionTitle}>{t.aboutAgriAdvisor}</Text>
+        <View style={styles.aboutCard}>
+          <Text style={styles.aboutTitle}>{t.aboutTitle}</Text>
+          <Text style={styles.aboutDesc}>{t.aboutDesc}</Text>
           <Pressable
-            key={i}
-            style={({ pressed }) => [
-              styles.quickCard,
-              {
-                borderColor: q.color + "44",
-                backgroundColor: q.color + "11",
-                opacity: pressed ? 0.8 : 1,
-              },
-            ]}
-            onPress={() => handleQuickQuery(q.label)}
+            style={styles.learnBtn}
+            onPress={() => router.push("/(tabs)/agents")}
           >
-            <View style={[styles.quickIconContainer, { backgroundColor: q.color + "22" }]}>
-              <Feather name={q.icon as any} size={20} color={q.color} />
-            </View>
-            <Text style={[styles.quickLabel, { color: q.color }]}>{q.label}</Text>
+            <Text style={styles.learnBtnText}>{t.viewAgentPipeline}</Text>
+            <Feather name="arrow-right" size={14} color={Colors.primary} />
           </Pressable>
-        ))}
-      </View>
-
-      <Text style={styles.sectionTitle}>About AgriAdvisor</Text>
-      <View style={styles.aboutCard}>
-        <Text style={styles.aboutTitle}>LangGraph 6-Agent Pipeline</Text>
-        <Text style={styles.aboutDesc}>
-          Every query flows through 6 specialized AI agents — Guardrails, Intent, Web Search, Weather, Market, and Synthesis — powered by open-source LLMs for cost-efficient, accurate agricultural advice.
-        </Text>
-        <Pressable
-          style={styles.learnBtn}
-          onPress={() => router.push("/(tabs)/agents")}
-        >
-          <Text style={styles.learnBtnText}>View Agent Pipeline</Text>
-          <Feather name="arrow-right" size={14} color={Colors.primary} />
-        </Pressable>
-      </View>
+        </View>
 
         <View style={{ height: 32 }} />
       </ScrollView>
