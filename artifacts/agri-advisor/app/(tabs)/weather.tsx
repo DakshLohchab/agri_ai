@@ -1,16 +1,18 @@
 import { Feather } from "@expo/vector-icons";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Platform,
   Pressable,
   RefreshControl,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import Svg, { Path, Circle, G, Text as SvgText } from "react-native-svg";
 import { Colors } from "@/constants/colors";
 import { useAuth } from "@/context/AuthContext";
 
@@ -41,8 +43,97 @@ function getWeather(code: number) {
   return WMO_CODES[code] ?? { label: "Unknown", icon: "cloud" };
 }
 
+function TemperatureGraph({ weather, chartWidth }: { weather: WeatherDay[]; chartWidth?: number }) {
+  if (!weather.length) return null;
+
+  const minTemp = Math.min(...weather.map((d) => d.minTemp));
+  const maxTemp = Math.max(...weather.map((d) => d.maxTemp));
+  const range = maxTemp - minTemp || 1;
+
+  const width = chartWidth ?? 340;
+  const height = 180;
+  const margin = 24;
+  const innerWidth = width - margin * 2;
+  const innerHeight = height - 48;
+
+  const pointsHigh = weather.map((day, idx) => {
+    const x = margin + (innerWidth * idx) / (weather.length - 1);
+    const y = 16 + ((maxTemp - day.maxTemp) / range) * innerHeight;
+    return { x, y, value: day.maxTemp };
+  });
+
+  const pointsLow = weather.map((day, idx) => {
+    const x = margin + (innerWidth * idx) / (weather.length - 1);
+    const y = 16 + ((maxTemp - day.minTemp) / range) * innerHeight;
+    return { x, y, value: day.minTemp };
+  });
+
+  const linePath = (points: { x: number; y: number }[]) =>
+    points
+      .map((p, i) => `${i === 0 ? "M" : "L"}${p.x} ${p.y}`)
+      .join(" ");
+
+  const highPath = linePath(pointsHigh);
+  const lowPath = linePath(pointsLow);
+
+  const highArea = `${highPath} L ${pointsHigh[pointsHigh.length - 1].x} ${height - 20} L ${pointsHigh[0].x} ${height - 20} Z`;
+
+  return (
+    <View style={[styles.graphCard, { width: chartWidth ?? 340, alignSelf: "center" }]}>
+      <View style={styles.graphTitleRow}>
+        <Text style={styles.sectionTitle}>7-day Temperature</Text>
+        <View style={styles.legendRow}>
+          <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: Colors.warning }]} /><Text style={styles.legendText}>High</Text></View>
+          <View style={styles.legendItem}><View style={[styles.legendDot, { backgroundColor: Colors.info }]} /><Text style={styles.legendText}>Low</Text></View>
+        </View>
+      </View>
+      <Svg width={width} height={height}>
+        <Path d={highArea} fill={Colors.warning + "22"} />
+        <Path d={lowPath} stroke={Colors.info} strokeWidth={2} fill="none" />
+        <Path d={highPath} stroke={Colors.warning} strokeWidth={2} fill="none" />
+        {pointsHigh.map((p, idx) => (
+          <G key={`high-${idx}`}>
+            <Circle cx={p.x} cy={p.y} r={4} fill={Colors.warning} />
+            <SvgText x={p.x} y={p.y - 8} fontSize="10" fill={Colors.warning} fontWeight="700" textAnchor="middle">
+              {p.value}°
+            </SvgText>
+          </G>
+        ))}
+        {pointsLow.map((p, idx) => (
+          <G key={`low-${idx}`}>
+            <Circle cx={p.x} cy={p.y} r={4} fill={Colors.info} />
+            <SvgText x={p.x} y={p.y + 16} fontSize="10" fill={Colors.info} fontWeight="700" textAnchor="middle">
+              {p.value}°
+            </SvgText>
+          </G>
+        ))}
+        {weather.map((day, idx) => {
+          const x = margin + (innerWidth * idx) / (weather.length - 1);
+          const label = idx === 0 ? "Today" : new Date(day.date).toLocaleDateString([], { weekday: "short" });
+          return (
+            <SvgText
+              key={`label-${idx}`}
+              x={x}
+              y={height - 4}
+              fontSize="10"
+              fill={Colors.textSecondary}
+              fontWeight="500"
+              textAnchor="middle"
+            >
+              {label}
+            </SvgText>
+          );
+        })}
+      </Svg>
+      <Text style={styles.graphNote}>Hourly-style line trend UI (high/low) with point labels.</Text>
+    </View>
+  );
+}
+
 export default function WeatherScreen() {
   const { user } = useAuth();
+  const { width } = useWindowDimensions();
+  const isLargeScreen = width >= 768;
   const [weather, setWeather] = useState<WeatherDay[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -58,7 +149,7 @@ export default function WeatherScreen() {
   };
 
   const getCoords = () => {
-    const loc = user?.location?.toLowerCase() ?? "";
+    const loc = (user as any)?.location?.toLowerCase() ?? "";
     for (const key of Object.keys(LOCATIONS)) {
       if (loc.includes(key)) return LOCATIONS[key];
     }
@@ -109,7 +200,7 @@ export default function WeatherScreen() {
     <SafeAreaView style={styles.container} edges={["left", "right", "top"]}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={[styles.content, { paddingTop: 16, paddingBottom: 90 }]}
+        contentContainerStyle={[styles.content, styles.contentLarge, { paddingTop: 16, paddingBottom: 90 }]}
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -130,13 +221,13 @@ export default function WeatherScreen() {
           </View>
         </View>
 
-        <View style={styles.pageHeader}>
-        <Text style={styles.pageTitle}>Weather</Text>
-        <Text style={styles.pageLocation}>
-          <Feather name="map-pin" size={12} color={Colors.textMuted} />
-          {" "}{user?.location ?? "India"}
-        </Text>
-      </View>
+        <View style={[styles.pageHeader, isLargeScreen && styles.pageHeaderLarge]}>
+          <Text style={[styles.pageTitle, isLargeScreen && styles.pageTitleLarge]}>Weather</Text>
+          <Text style={styles.pageLocation}>
+            <Feather name="map-pin" size={14} color={Colors.textMuted} />
+            {" "}{(user as any)?.location ?? "India"}
+          </Text>
+        </View>
 
       {isLoading ? (
         <View style={styles.loading}>
@@ -193,12 +284,14 @@ export default function WeatherScreen() {
             </View>
           )}
 
+          <TemperatureGraph weather={weather} chartWidth={isLargeScreen ? Math.min(width * 0.9, 960) : Math.min(width - 40, 340)} />
+
           <Text style={styles.sectionTitle}>7-Day Forecast</Text>
           <View style={styles.forecastList}>
             {weather.map((day, i) => {
               const w = getWeather(day.weatherCode);
               return (
-                <View key={day.date} style={[styles.forecastItem, i === 0 && styles.forecastItemFirst]}>
+                <View key={day.date} style={[styles.forecastItem, i === 0 && styles.forecastItemFirst, isLargeScreen && styles.forecastItemLarge]}>
                   <Text style={styles.forecastDay}>{formatDay(day.date)}</Text>
                   <Feather name={w.icon as any} size={18} color={i === 0 ? Colors.weather : Colors.textSecondary} />
                   <Text style={styles.forecastDesc}>{w.label}</Text>
@@ -302,6 +395,12 @@ const styles = StyleSheet.create({
   },
   sourceText: { fontSize: 11, color: Colors.success, fontFamily: "Inter_500Medium" },
   sectionTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold", color: Colors.text },
+  contentLarge: { width: "100%", maxWidth: 1000, alignSelf: "center" },
+  graphTitleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
+  legendRow: { flexDirection: "row", gap: 10 },
+  legendItem: { flexDirection: "row", alignItems: "center", gap: 4 },
+  legendDot: { width: 8, height: 8, borderRadius: 4 },
+  legendText: { fontSize: 12, color: Colors.textSecondary, fontFamily: "Inter_400Regular" },
   forecastList: {
     backgroundColor: Colors.surface,
     borderRadius: 20,
@@ -358,4 +457,67 @@ const styles = StyleSheet.create({
   headerCardContent: { flex: 1, gap: 2 },
   headerCardTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: Colors.text },
   headerCardDesc: { fontSize: 12, color: Colors.textSecondary, fontFamily: "Inter_400Regular" },
+
+  pageHeaderLarge: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" },
+  pageTitleLarge: { fontSize: 36 },
+
+  graphCard: {
+    marginTop: 16,
+    backgroundColor: Colors.surface,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: Colors.surfaceBorder,
+    padding: 16,
+  },
+  graphContainer: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    height: 150,
+    paddingTop: 16,
+    gap: 8,
+  },
+  graphColumn: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 4,
+  },
+  graphBar: {
+    width: "100%",
+    minHeight: 16,
+    borderRadius: 8,
+    justifyContent: "flex-end",
+    alignItems: "center",
+  },
+  graphBarMin: {
+    backgroundColor: Colors.info,
+  },
+  graphBarLabel: {
+    fontSize: 11,
+    color: Colors.surface,
+    fontFamily: "Inter_600SemiBold",
+    paddingVertical: 2,
+  },
+  graphBarLabelSmall: {
+    fontSize: 9,
+    color: Colors.surface,
+    fontFamily: "Inter_500Medium",
+    paddingVertical: 1,
+  },
+  graphDayLabel: {
+    fontSize: 11,
+    color: Colors.textSecondary,
+    fontFamily: "Inter_500Medium",
+  },
+  graphNote: {
+    marginTop: 8,
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontFamily: "Inter_400Regular",
+  },
+  forecastItemLarge: {
+    flexDirection: "row",
+    paddingVertical: 18,
+  },
 });
