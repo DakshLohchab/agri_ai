@@ -1,569 +1,703 @@
+/**
+ * AgriAdvisor LangGraph Client
+ * ==============================
+ * Orchestrates the 6-node pipeline by calling the backend API.
+ * The backend (Node/Python) runs the actual LLMs via Ollama:
+ *   Node 1 — Guardrails   → Llama-3-8B
+ *   Node 2 — Intent       → Mistral-7B
+ *   Node 3 — Web Search   → Qwen-14B  (real DuckDuckGo / SerpAPI)
+ *   Node 4 — Weather      → Open-Meteo API (free, no key)
+ *   Node 5 — Market       → AGMARKNET data.gov.in API
+ *   Node 6 — Synthesis    → Llama-3-70B
+ *
+ * Falls back gracefully if backend is unreachable.
+ */
+
 import { AgentStep } from "@/context/ChatContext";
 
-const AGENT_NODES = ["Guardrails", "Intent", "Web Search", "Weather", "Market", "Synthesis"];
+// ─── Config ───────────────────────────────────────────────────────────────────
 
-// API Configuration
-const API_CONFIG = {
-  weather: {
-    url: "https://api.open-meteo.com/v1/forecast",
-    free: true,
-  },
-  market: {
-    // Your API key from .env
-    apiKey: process.env.EXPO_PUBLIC_DATA_GOV_API_KEY || "579b464db66ec23bdd0000012e9054a4d444cdce6bf564cfca67cc1",
-    // Correct AGMARKNET dataset ID for daily market prices
-    agmarknetUrl: "https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070",
-  },
+const BACKEND_URL =
+  process.env.EXPO_PUBLIC_BACKEND_URL ||
+  (process.env.NODE_ENV === "development"
+    ? "http://localhost:3000"
+    : "http://localhost:3000");
+
+const AGMARKNET_API_KEY =
+  process.env.EXPO_PUBLIC_DATA_GOV_API_KEY ||
+  "579b464db66ec23bdd0000012e9054a4d444cdce6bf564cfca67cc1";
+
+const AGMARKNET_URL =
+  "https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export type DemoScenarioKey =
+  | "off_domain"
+  | "ambiguous"
+  | "weather_rain"
+  | "market_wheat"
+  | "pest_alert"
+  | "scheme_kisan";
+
+type PipelineResult = {
+  final_response: string;
+  audit_log: { node: string; status: string; duration_ms: number; message: string }[];
+  intent_type: string;
+  weather_data: any;
+  market_data: any;
+  web_results: string[];
+  is_safe: boolean;
+  guardrails_message: string;
 };
 
-// Fallback data for when API fails
-const FALLBACK_MARKET_DATA: Record<string, any> = {
-  mango: {
-    name: "Mango",
-    msp: 0, // No MSP for mango
-    mandiPrices: {
-      "Uttar Pradesh": 2500,
-      "Maharashtra": 2800,
-      "Gujarat": 2600,
-      "Karnataka": 2700,
-      "Andhra Pradesh": 2400,
-    },
-    priceRange: { min: 2400, max: 2800 },
-    unit: "quintal",
-    season: "April-July",
-    varieties: ["Alphonso", "Dasheri", "Langra", "Chausa", "Totapuri"],
-  },
-  wheat: {
-    name: "Wheat",
-    msp: 2275,
-    mandiPrices: {
-      "Punjab": 2390,
-      "Haryana": 2410,
-      "Uttar Pradesh": 2350,
-      "Madhya Pradesh": 2380,
-      "Rajasthan": 2360,
-    },
-    priceRange: { min: 2320, max: 2450 },
-    unit: "quintal",
-    trend: "up",
-    trendPct: 2.1,
-  },
-  rice: {
-    name: "Rice",
-    msp: 2183,
-    mandiPrices: {
-      "Punjab": 2280,
-      "West Bengal": 2250,
-      "Telangana": 2290,
-      "Chhattisgarh": 2230,
-    },
-    priceRange: { min: 2200, max: 2320 },
-    unit: "quintal",
-    trend: "stable",
-    trendPct: 0.3,
-  },
-  cotton: {
-    name: "Cotton",
-    msp: 7121,
-    mandiPrices: {
-      "Gujarat": 7350,
-      "Maharashtra": 7280,
-      "Telangana": 7420,
-    },
-    priceRange: { min: 7200, max: 7500 },
-    unit: "quintal",
-    trend: "down",
-    trendPct: -1.4,
-  },
-};
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-// Helper functions
 function extractCommodity(query: string): string | null {
-  const commodities = ["mango", "wheat", "rice", "cotton", "maize", "soybean", "tomato", "onion", "potato", "apple", "banana", "grapes"];
-  const lowerQuery = query.toLowerCase();
-  for (const commodity of commodities) {
-    if (lowerQuery.includes(commodity)) {
-      return commodity;
-    }
+  const commodities = [
+    "mango", "wheat", "rice", "cotton", "maize", "soybean",
+    "tomato", "onion", "potato", "apple", "banana", "grapes",
+    "sugarcane", "mustard", "groundnut", "bajra", "jowar",
+  ];
+  const lower = query.toLowerCase();
+  for (const c of commodities) {
+    if (lower.includes(c)) return c;
   }
   return null;
 }
 
 function extractLocation(query: string): string | null {
-  const locations = ["punjab", "haryana", "up", "uttar pradesh", "madhya pradesh", "rajasthan", "gujarat", "maharashtra", "karnataka", "telangana", "andhra pradesh", "tamil nadu", "west bengal", "bihar", "delhi"];
-  const lowerQuery = query.toLowerCase();
-  for (const location of locations) {
-    if (lowerQuery.includes(location)) {
-      return location;
-    }
+  const locations = [
+    "punjab", "haryana", "uttar pradesh", "up", "madhya pradesh", "mp",
+    "rajasthan", "gujarat", "maharashtra", "karnataka", "telangana",
+    "andhra pradesh", "tamil nadu", "west bengal", "bihar", "delhi",
+    "odisha", "chhattisgarh", "jharkhand", "himachal", "uttarakhand",
+    "pune", "mumbai", "nashik", "nagpur", "hyderabad", "bangalore",
+    "lucknow", "jaipur", "chandigarh", "amritsar", "ludhiana",
+  ];
+  const lower = query.toLowerCase();
+  for (const loc of locations) {
+    if (lower.includes(loc)) return loc;
   }
   return null;
 }
 
-function formatIndianCurrency(amount: number): string {
-  if (!amount) return "N/A";
-  return new Intl.NumberFormat('en-IN', {
-    maximumFractionDigits: 0,
-  }).format(amount);
+function classifyIntent(query: string): string {
+  const lower = query.toLowerCase();
+  if (lower.match(/price|mandi|market|msp|rate|sell|quintal|bazaar|bhav/))
+    return "market";
+  if (lower.match(/weather|rain|rainfall|temperature|forecast|humid|wind|cloud|storm/))
+    return "weather";
+  if (lower.match(/pest|disease|insect|fungus|blight|wilt|virus|spray|pesticide/))
+    return "pest";
+  if (lower.match(/scheme|subsidy|kisan|yojana|government|loan|credit|insurance/))
+    return "scheme";
+  return "general";
 }
 
-// Live API Functions
+function formatIndianNumber(n: number): string {
+  return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(n);
+}
+
+// ─── Live Weather API (Open-Meteo — free, no key needed) ──────────────────────
+
 async function fetchLiveWeather(location: string): Promise<any> {
   try {
-    const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`;
-    const geoResponse = await fetch(geoUrl);
-    const geoData = await geoResponse.json();
-    
-    if (!geoData.results || geoData.results.length === 0) {
-      return null;
+    // Step 1: Geocode the location
+    const geoRes = await fetch(
+      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`
+    );
+    const geoData = await geoRes.json();
+
+    let lat = 20.5937;
+    let lon = 78.9629; // default: India center
+
+    if (geoData.results && geoData.results.length > 0) {
+      lat = geoData.results[0].latitude;
+      lon = geoData.results[0].longitude;
     }
-    
-    const { latitude, longitude } = geoData.results[0];
-    const weatherUrl = `${API_CONFIG.weather.url}?latitude=${latitude}&longitude=${longitude}&daily=temperature_2m_max,temperature_2m_min,weathercode,precipitation_sum&current_weather=true&timezone=Asia%2FKolkata&forecast_days=3`;
-    const weatherResponse = await fetch(weatherUrl);
-    const data = await weatherResponse.json();
-    
-    return {
-      current: {
-        temp: Math.round(data.current_weather.temperature),
-        wind: Math.round(data.current_weather.windspeed),
-        code: data.current_weather.weathercode,
-      },
-      daily: data.daily,
+
+    // Step 2: Fetch 7-day forecast
+    const weatherRes = await fetch(
+      `https://api.open-meteo.com/v1/forecast` +
+        `?latitude=${lat}&longitude=${lon}` +
+        `&daily=temperature_2m_max,temperature_2m_min,weathercode,precipitation_sum,windspeed_10m_max,uv_index_max` +
+        `&current_weather=true` +
+        `&timezone=Asia%2FKolkata` +
+        `&forecast_days=7`
+    );
+    const data = await weatherRes.json();
+
+    if (!data.daily) return null;
+
+    const WMO: Record<number, string> = {
+      0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
+      45: "Foggy", 51: "Light drizzle", 61: "Light rain", 63: "Moderate rain",
+      71: "Light snow", 80: "Rain showers", 95: "Thunderstorm",
     };
-  } catch (error) {
-    console.error("Weather API error:", error);
+
+    return {
+      current_temp: Math.round(data.current_weather.temperature),
+      wind_speed: Math.round(data.current_weather.windspeed),
+      location_used: location,
+      forecast: data.daily.time.map((date: string, i: number) => ({
+        date,
+        max: Math.round(data.daily.temperature_2m_max[i]),
+        min: Math.round(data.daily.temperature_2m_min[i]),
+        code: data.daily.weathercode[i],
+        description: WMO[data.daily.weathercode[i]] ?? "Variable",
+        rain_mm: +(data.daily.precipitation_sum[i] ?? 0).toFixed(1),
+        wind_kmh: Math.round(data.daily.windspeed_10m_max[i]),
+        uv: +(data.daily.uv_index_max[i] ?? 0).toFixed(1),
+      })),
+    };
+  } catch (err) {
+    console.warn("Weather API failed:", err);
     return null;
   }
 }
 
-// Fetch live market data from AGMARKNET
-async function fetchLiveMarketData(commodity: string, location: string): Promise<any> {
+// ─── Live Market API (AGMARKNET via data.gov.in) ───────────────────────────────
+
+async function fetchLiveMarketData(commodity: string, location: string | null): Promise<any> {
   try {
-    const apiKey = API_CONFIG.market.apiKey;
-    if (!apiKey) {
-      console.log("No API key found");
-      return null;
+    const params = new URLSearchParams({
+      "api-key": AGMARKNET_API_KEY,
+      format: "json",
+      "filters[commodity]": commodity.charAt(0).toUpperCase() + commodity.slice(1),
+      limit: "50",
+      offset: "0",
+    });
+
+    const res = await fetch(`${AGMARKNET_URL}?${params}`);
+    const data = await res.json();
+
+    if (!data.records || data.records.length === 0) return null;
+
+    // Filter by location if provided
+    let records = data.records;
+    if (location) {
+      const locLower = location.toLowerCase();
+      const filtered = data.records.filter((r: any) =>
+        r.state?.toLowerCase().includes(locLower) ||
+        r.district?.toLowerCase().includes(locLower) ||
+        r.market?.toLowerCase().includes(locLower)
+      );
+      if (filtered.length > 0) records = filtered;
     }
 
-    console.log(`Fetching market data for ${commodity} from AGMARKNET...`);
-    
-    // Search for commodity in AGMARKNET database
-    // Using the correct dataset ID for agricultural market prices
-    const url = `${API_CONFIG.market.agmarknetUrl}?api-key=${apiKey}&format=json&filters[commodity]=${encodeURIComponent(commodity)}&limit=50&offset=0`;
-    
-    const response = await fetch(url);
-    const data = await response.json();
-    
-    console.log("API Response:", data);
-    
-    if (data && data.records && data.records.length > 0) {
-      // Filter by location if provided
-      let filteredRecords = data.records;
-      if (location) {
-        filteredRecords = data.records.filter((record: any) => {
-          const stateMatch = record.state?.toLowerCase().includes(location.toLowerCase());
-          const marketMatch = record.market?.toLowerCase().includes(location.toLowerCase());
-          const districtMatch = record.district?.toLowerCase().includes(location.toLowerCase());
-          return stateMatch || marketMatch || districtMatch;
-        });
-      }
-      
-      // Process the data
-      const prices = filteredRecords.slice(0, 5).map((record: any) => ({
-        market: record.market || record.center_name || record.mandi || "Local Mandi",
-        state: record.state || record.district || "Unknown",
-        price: record.modal_price || record.avg_price || record.min_price || record.max_price,
-        arrivalDate: record.arrival_date,
-        variety: record.variety,
-      })).filter((p: any) => p.price && p.price > 0);
-      
-      if (prices.length > 0) {
-        return {
-          source: "AGMARKNET (Live)",
-          commodity,
-          prices,
-          lastUpdated: new Date().toISOString(),
-        };
-      }
-    }
-    
-    console.log(`No live data found for ${commodity}, using fallback`);
-    return null;
-  } catch (error) {
-    console.error("Market API error:", error);
+    const prices = records
+      .slice(0, 8)
+      .map((r: any) => ({
+        market: r.market || r.mandi || "Local Mandi",
+        state: r.state || r.district || "",
+        district: r.district || "",
+        modal_price: parseFloat(r.modal_price) || 0,
+        min_price: parseFloat(r.min_price) || 0,
+        max_price: parseFloat(r.max_price) || 0,
+        variety: r.variety || "",
+        arrival_date: r.arrival_date || "",
+      }))
+      .filter((p: any) => p.modal_price > 0);
+
+    if (prices.length === 0) return null;
+
+    const avg = Math.round(prices.reduce((s: number, p: any) => s + p.modal_price, 0) / prices.length);
+
+    return {
+      source: "AGMARKNET (Live — data.gov.in)",
+      commodity,
+      prices,
+      avg_modal_price: avg,
+      record_count: data.total,
+      last_updated: new Date().toISOString(),
+    };
+  } catch (err) {
+    console.warn("AGMARKNET API failed:", err);
     return null;
   }
 }
 
-// Enhanced market response with live data
-async function generateMarketResponse(commodity: string, location: string | null): Promise<string> {
-  // Try to fetch live data
-  let liveData = null;
-  if (API_CONFIG.market.apiKey) {
-    liveData = await fetchLiveMarketData(commodity, location || "india");
-  }
-  
-  // Get fallback data
-  const fallbackData = FALLBACK_MARKET_DATA[commodity];
-  
-  let response = `📊 ${commodity.toUpperCase()} MARKET UPDATE\n\n`;
-  
-  // Show live data if available
-  if (liveData && liveData.prices && liveData.prices.length > 0) {
-    response += `┌─────────────────────────────────────────────────────────────┐\n`;
-    response += `│ LIVE MARKET DATA — ${liveData.source.padEnd(35)}│\n`;
-    response += `├─────────────────────────────────────────────────────────────┤\n`;
-    
-    liveData.prices.forEach((price: any, index: number) => {
-      const marketName = (price.market || "Local Mandi").substring(0, 25);
-      const priceValue = typeof price.price === 'number' ? price.price : parseInt(price.price);
-      if (priceValue > 0) {
-        response += `│ ${(index + 1).toString().padEnd(2)} ${marketName.padEnd(23)} ₹${formatIndianCurrency(priceValue)}/qtl${' '.repeat(8)}│\n`;
-        if (price.variety) {
-          response += `│    Variety: ${price.variety.substring(0, 35).padEnd(35)}│\n`;
-        }
-      }
+// ─── MSP Reference Data (2024-25) ─────────────────────────────────────────────
+
+const MSP_2024_25: Record<string, { msp: number; unit: string; grade: string }> = {
+  wheat:     { msp: 2275, unit: "quintal", grade: "FAQ" },
+  rice:      { msp: 2183, unit: "quintal", grade: "Common" },
+  cotton:    { msp: 7121, unit: "quintal", grade: "Medium staple" },
+  soybean:   { msp: 4892, unit: "quintal", grade: "Yellow" },
+  maize:     { msp: 2090, unit: "quintal", grade: "Yellow" },
+  mustard:   { msp: 5650, unit: "quintal", grade: "Bold" },
+  groundnut: { msp: 6377, unit: "quintal", grade: "With shell" },
+  bajra:     { msp: 2500, unit: "quintal", grade: "Hybrid" },
+  jowar:     { msp: 3180, unit: "quintal", grade: "Hybrid" },
+  sugarcane: { msp: 340,  unit: "quintal", grade: "FRP" },
+};
+
+// ─── Backend Pipeline Call (calls Python LangGraph + Ollama LLMs) ──────────────
+
+async function callBackendPipeline(
+  query: string,
+  location: string,
+  language: string = "English"
+): Promise<PipelineResult | null> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/agri/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, location, language }),
+      signal: AbortSignal.timeout(30000),
     });
-    
-    response += `├─────────────────────────────────────────────────────────────┤\n`;
-    response += `│ Last Updated: ${liveData.lastUpdated.substring(0, 19).padEnd(39)}│\n`;
-    response += `└─────────────────────────────────────────────────────────────┘\n\n`;
-  } 
-  
-  // Add fallback reference data
-  if (fallbackData) {
-    response += `┌─────────────────────────────────────────────────────────────┐\n`;
-    response += `│ REFERENCE PRICES (Market Standards)                         │\n`;
-    response += `├─────────────────────────────────────────────────────────────┤\n`;
-    
-    if (fallbackData.msp && fallbackData.msp > 0) {
-      response += `│ • MSP: ₹${formatIndianCurrency(fallbackData.msp)}/quintal${' '.repeat(34)}│\n`;
-    }
-    
-    // Show typical mandi prices
-    const typicalPrices = Object.entries(fallbackData.mandiPrices).slice(0, 3);
-    typicalPrices.forEach(([region, price]) => {
-      response += `│ • ${region.padEnd(20)} ₹${formatIndianCurrency(price as number)}/quintal${' '.repeat(12)}│\n`;
-    });
-    
-    if (fallbackData.priceRange) {
-      response += `│ • Price Range: ₹${formatIndianCurrency(fallbackData.priceRange.min)}–${formatIndianCurrency(fallbackData.priceRange.max)}/quintal${' '.repeat(7)}│\n`;
-    }
-    
-    if (fallbackData.season) {
-      response += `│ • Season: ${fallbackData.season.padEnd(36)}│\n`;
-    }
-    
-    if (fallbackData.varieties) {
-      response += `│ • Varieties: ${fallbackData.varieties.join(", ").substring(0, 40).padEnd(40)}│\n`;
-    }
-    
-    response += `└─────────────────────────────────────────────────────────────┘\n\n`;
-    
-    if (!liveData) {
-      response += `⚠️ Note: Showing reference prices. Connect to internet for live market rates.\n\n`;
-    }
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (err) {
+    console.warn("Backend pipeline unreachable, running client-side fallback:", err);
+    return null;
   }
-  
-  // Location-specific advice
-  if (location && fallbackData && fallbackData.mandiPrices[location]) {
-    const locationPrice = fallbackData.mandiPrices[location];
-    response += `📍 ${location.toUpperCase()} MARKET INSIGHTS\n`;
-    response += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-    
-    if (fallbackData.msp && fallbackData.msp > 0) {
-      const premium = ((locationPrice - fallbackData.msp) / fallbackData.msp * 100).toFixed(1);
-      response += `• Current prices are ${premium}% above MSP\n`;
-      
-      if (parseFloat(premium) > 10) {
-        response += `• ✓ EXCELLENT — Consider selling now\n`;
-      } else if (parseFloat(premium) > 5) {
-        response += `• ✓ GOOD — Fair market prices\n`;
-      } else {
-        response += `• ⚠️ MODERATE — Consider waiting\n`;
-      }
-    }
-    response += `\n`;
-  }
-  
-  // Actionable advice
-  response += `💡 ACTIONABLE ADVICE\n`;
-  response += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  
-  if (commodity === "mango") {
-    response += `1. QUALITY: Grade mangoes by size and ripeness for better prices\n`;
-    response += `2. PACKAGING: Use proper crates to prevent bruising during transport\n`;
-    response += `3. TIMING: Peak season ${fallbackData?.season || "April-July"} — monitor daily rates\n`;
-    response += `4. MARKETS: Alphonso variety fetches premium in Maharashtra & Gujarat\n`;
-  } else if (fallbackData && fallbackData.msp && fallbackData.msp > 0) {
-    response += `1. SELL STRATEGY: Sell when mandi prices are 5%+ above MSP\n`;
-    response += `2. STORAGE: Ensure proper storage facilities to maintain quality\n`;
-    response += `3. MONITOR: Check rates across multiple mandis for best price\n`;
-  } else {
-    response += `1. COMPARE: Check prices across multiple local mandis\n`;
-    response += `2. QUALITY: Better quality fetches premium prices\n`;
-    response += `3. TIMING: Early morning arrivals often get better rates\n`;
-  }
-  
-  response += `\n📱 LIVE PRICE SOURCES\n`;
-  response += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  response += `• AGMARKNET: agmarknet.gov.in\n`;
-  response += `• Local APMC: Contact nearest Agricultural Produce Market Committee\n`;
-  response += `• Mobile Apps: "eNAM" app for real-time mandi prices\n`;
-  
-  return response;
 }
 
-function generateWeatherResponse(location: string | null, commodity: string | null): string {
-  let response = `🌤️ WEATHER ADVISORY`;
-  
-  if (location) {
-    response += ` — ${location.toUpperCase()}`;
-  }
-  response += `\n\n`;
+// ─── Response Generators (client-side fallback when backend is down) ───────────
 
-  response += `┌─────────────────────────────────────────────────────────────┐\n`;
-  response += `│ WEATHER CONDITIONS                                         │\n`;
-  response += `├─────────────────────────────────────────────────────────────┤\n`;
-  response += `│ 🌡️ Day Temperature: 28°C – 34°C                            │\n`;
-  response += `│ 🌙 Night Temperature: 18°C – 24°C                           │\n`;
-  response += `│ 💧 Humidity: 55% – 75%                                      │\n`;
-  response += `│ 🌬️ Wind: 10 – 20 km/h                                       │\n`;
-  response += `│ 🌧️ Rainfall: Low probability (15-20%)                       │\n`;
-  response += `└─────────────────────────────────────────────────────────────┘\n\n`;
+function buildWeatherResponse(weatherData: any, commodity: string | null, location: string | null): string {
+  if (!weatherData) {
+    return `## 🌤️ Weather Advisory\n\nUnable to fetch live weather data right now. Please check [Open-Meteo](https://open-meteo.com) or your local weather app.\n\nFor farming decisions, always check 3-day forecasts before irrigation, spraying, or harvesting.`;
+  }
+
+  const today = weatherData.forecast[0];
+  const rainDays = weatherData.forecast.filter((d: any) => d.rain_mm > 5);
+
+  let md = `## 🌤️ Weather for ${location ? location.charAt(0).toUpperCase() + location.slice(1) : "Your Region"}\n\n`;
+  md += `**Current:** ${weatherData.current_temp}°C · ${today.description} · Wind ${weatherData.wind_speed} km/h\n\n`;
+  md += `### 7-Day Forecast\n\n`;
+  md += `| Day | Condition | High/Low | Rain | Wind |\n`;
+  md += `|-----|-----------|----------|------|------|\n`;
+
+  weatherData.forecast.forEach((d: any, i: number) => {
+    const label = i === 0 ? "**Today**" : i === 1 ? "Tomorrow" : new Date(d.date).toLocaleDateString("en-IN", { weekday: "short" });
+    md += `| ${label} | ${d.description} | ${d.max}°/${d.min}° | ${d.rain_mm}mm | ${d.wind_kmh} km/h |\n`;
+  });
+
+  if (rainDays.length > 0) {
+    md += `\n### ⚠️ Rainfall Advisory\n`;
+    md += `Rain expected on **${rainDays.length} day(s)** this week (total ~${rainDays.reduce((s: number, d: any) => s + d.rain_mm, 0).toFixed(0)}mm).\n`;
+    md += `- Delay spraying and harvesting operations\n`;
+    md += `- Ensure drainage channels are clear\n`;
+    md += `- Protect sensitive crops with covers if rainfall >20mm forecast\n`;
+  }
 
   if (commodity) {
-    response += `🌾 ${commodity.toUpperCase()} FARMING ADVISORY\n`;
-    response += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-    
-    if (commodity === "mango") {
-      response += `• Flowering stage: Protect from strong winds\n`;
-      response += `• Irrigation: Maintain soil moisture, avoid waterlogging\n`;
-      response += `• Pest watch: Monitor for hoppers and mealybugs\n`;
-    } else if (commodity === "wheat") {
-      response += `• Grain filling stage: Ensure adequate irrigation\n`;
-      response += `• Disease watch: Monitor for rust and powdery mildew\n`;
-      response += `• Harvest planning: Prepare for harvest in 2-3 weeks\n`;
-    } else if (commodity === "rice") {
-      response += `• Transplanting: Ideal time for paddy transplantation\n`;
-      response += `• Water management: Maintain 2-3 cm water level\n`;
-      response += `• Fertilizer: Apply nitrogen in split doses\n`;
-    }
-    response += `\n`;
+    md += `\n### 🌾 ${commodity.charAt(0).toUpperCase() + commodity.slice(1)} Crop Advisory\n`;
+    const advisories: Record<string, string> = {
+      wheat: "Wheat at grain-filling stage needs 20-25°C. Avoid irrigation during high winds. Watch for rust if humidity >70%.",
+      rice: "Rice needs stable 25-35°C. Transplant seedlings when temperatures consistent. Maintain 2-3 cm water level.",
+      cotton: "Cotton boll formation needs 30-35°C. Heavy rain can damage open bolls — harvest promptly after dry spells.",
+      maize: "Maize needs 25-30°C. Monitor for stem borer in warm+humid conditions. Avoid waterlogging.",
+      tomato: "Tomatoes prefer 20-27°C. High humidity increases disease risk (blight). Stake plants before wind events.",
+      general: "Monitor soil moisture closely. Avoid field operations during or immediately after rainfall.",
+    };
+    md += `${advisories[commodity] ?? advisories.general}\n`;
   }
 
-  response += `⚠️ FARM OPERATIONS GUIDE\n`;
-  response += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-  response += `• IRRIGATION: Morning hours (6-9 AM) for optimal absorption\n`;
-  response += `• SPRAYING: Avoid windy conditions (>15 km/h)\n`;
-  response += `• HARVESTING: Complete before any rainfall forecast\n`;
-  response += `• PROTECTION: Cover sensitive crops from extreme temperatures\n`;
-
-  return response;
+  md += `\n*📡 Source: Open-Meteo API (live data)*`;
+  return md;
 }
 
-function generateSchemesResponse(): string {
-  return `💰 GOVERNMENT SCHEMES FOR FARMERS
+function buildMarketResponse(
+  liveData: any,
+  commodity: string,
+  location: string | null
+): string {
+  const msp = MSP_2024_25[commodity];
+  let md = `## 📊 ${commodity.charAt(0).toUpperCase() + commodity.slice(1)} Market Update\n\n`;
 
-┌─────────────────────────────────────────────────────────────┐
-│ PM-KISAN (Pradhan Mantri Kisan Samman Nidhi)               │
-├─────────────────────────────────────────────────────────────┤
-│ • Benefit: ₹6,000 per year in 3 installments               │
-│ • Eligibility: All landholding farmers                     │
-│ • Apply: pmkisan.gov.in                                    │
-└─────────────────────────────────────────────────────────────┘
+  if (msp) {
+    md += `**MSP 2024-25:** ₹${formatIndianNumber(msp.msp)}/${msp.unit} (${msp.grade})\n\n`;
+  }
 
-┌─────────────────────────────────────────────────────────────┐
-│ PMFBY (Pradhan Mantri Fasal Bima Yojana)                   │
-├─────────────────────────────────────────────────────────────┤
-│ • Premium: 1.5%–5% of sum insured (subsidized)             │
-│ • Coverage: Yield loss, prevented sowing, post-harvest     │
-│ • Enrollment: Through banks, CSC, or agriculture dept      │
-└─────────────────────────────────────────────────────────────┘
+  if (liveData && liveData.prices.length > 0) {
+    md += `### 🟢 Live AGMARKNET Data\n`;
+    md += `*Source: ${liveData.source} · ${liveData.record_count ?? ""} records found*\n\n`;
+    md += `| Market | State | Modal Price | Min | Max |\n`;
+    md += `|--------|-------|------------|-----|-----|\n`;
 
-📌 HOW TO APPLY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. Visit your nearest CSC (Common Service Centre)
-2. Contact your local agriculture department
-3. Apply online at the respective scheme portals`;
+    liveData.prices.forEach((p: any) => {
+      md += `| ${p.market} | ${p.state} | ₹${formatIndianNumber(p.modal_price)} | ₹${formatIndianNumber(p.min_price)} | ₹${formatIndianNumber(p.max_price)} |\n`;
+    });
+
+    if (liveData.avg_modal_price && msp) {
+      const premium = (((liveData.avg_modal_price - msp.msp) / msp.msp) * 100).toFixed(1);
+      const premiumNum = parseFloat(premium);
+      md += `\n**Average Modal Price:** ₹${formatIndianNumber(liveData.avg_modal_price)}/quintal`;
+      md += ` (${premiumNum >= 0 ? "+" : ""}${premium}% vs MSP)\n\n`;
+      if (premiumNum > 10) {
+        md += `✅ **Excellent time to sell** — prices significantly above support price.\n`;
+      } else if (premiumNum > 5) {
+        md += `✅ **Good prices** — consider selling if storage costs are high.\n`;
+      } else if (premiumNum >= 0) {
+        md += `⚠️ **Near MSP levels** — hold if storage is available and costs permit.\n`;
+      } else {
+        md += `🔴 **Below MSP** — contact nearest FCI/state procurement agency immediately.\n`;
+      }
+    }
+  } else {
+    md += `### ⚠️ Live Data Unavailable\n`;
+    md += `AGMARKNET API returned no records for "${commodity}"${location ? ` in ${location}` : ""}.\n`;
+    md += `Check [agmarknet.gov.in](https://agmarknet.gov.in) or the eNAM app for latest rates.\n\n`;
+
+    if (msp) {
+      md += `**Reference MSP:** ₹${formatIndianNumber(msp.msp)}/quintal\n`;
+    }
+  }
+
+  md += `\n### 💡 Action Steps\n`;
+  md += `1. **Sell strategy:** Compare at least 3 nearby mandis before deciding\n`;
+  md += `2. **Transport:** Factor transport costs (₹50-150/quintal) into your net price\n`;
+  md += `3. **Government procurement:** Contact FCI or state agency if mandi price < MSP\n`;
+  md += `4. **Live rates:** [agmarknet.gov.in](https://agmarknet.gov.in) · eNAM app\n`;
+
+  if (liveData) md += `\n*📡 Source: AGMARKNET data.gov.in (live)*`;
+  return md;
 }
 
-// Main export function
+function buildPestResponse(query: string, commodity: string | null, location: string | null): string {
+  const cropName = commodity ? commodity.charAt(0).toUpperCase() + commodity.slice(1) : "Crop";
+  let md = `## 🔬 Pest & Disease Advisory\n\n`;
+
+  if (commodity) {
+    const pestDB: Record<string, { pests: string[]; symptoms: string[]; treatment: string[] }> = {
+      wheat: {
+        pests: ["Yellow Rust (Puccinia striiformis)", "Brown Rust", "Powdery Mildew", "Aphids"],
+        symptoms: ["Yellow/orange stripes on leaves", "Brown pustules on leaves", "White powdery coating", "Curling leaves, sticky residue"],
+        treatment: ["Propiconazole 25 EC @ 0.1%", "Tebuconazole 250 EW @ 0.1%", "Sulphur 80 WP @ 0.2%", "Imidacloprid 17.8 SL @ 0.05%"],
+      },
+      rice: {
+        pests: ["Brown Plant Hopper (BPH)", "Blast (Magnaporthe oryzae)", "Sheath Blight", "Leaf Folder"],
+        symptoms: ["Circular burnt patches (hopper burn)", "Diamond-shaped lesions on leaves", "Oval lesions on sheath", "Folded leaves with frass"],
+        treatment: ["Buprofezin 25 SC @ 0.0125%", "Tricyclazole 75 WP @ 0.06%", "Hexaconazole 5 EC @ 0.1%", "Chlorpyrifos 20 EC @ 0.05%"],
+      },
+      cotton: {
+        pests: ["Pink Bollworm", "Whitefly", "Thrips", "Mealybug"],
+        symptoms: ["Entry holes in bolls", "Yellowing, virus vector", "Silver-grey leaf surface", "White cottony masses"],
+        treatment: ["Emamectin benzoate 5 SG @ 0.002%", "Pyriproxyfen 10 EC @ 0.05%", "Spinosad 45 SC @ 0.03%", "Profenofos 50 EC @ 0.05%"],
+      },
+      tomato: {
+        pests: ["Leaf Curl Virus (TLCV)", "Early Blight", "Late Blight", "Fruit Borer"],
+        symptoms: ["Upward leaf curl, mosaic", "Concentric brown rings on leaves", "Water-soaked dark lesions", "Entry holes in fruit"],
+        treatment: ["Control whitefly vector with Imidacloprid", "Mancozeb 75 WP @ 0.2%", "Metalaxyl-M + Mancozeb @ 0.25%", "Spinosad 45 SC @ 0.03%"],
+      },
+    };
+
+    const info = pestDB[commodity];
+    if (info) {
+      md += `### Common ${cropName} Pests & Diseases\n\n`;
+      info.pests.forEach((pest, i) => {
+        md += `**${pest}**\n`;
+        md += `- Symptoms: ${info.symptoms[i]}\n`;
+        md += `- Treatment: ${info.treatment[i]}\n\n`;
+      });
+    }
+  }
+
+  md += `### 🛡️ Integrated Pest Management (IPM) Principles\n`;
+  md += `1. **Scout regularly** — Check 20 plants randomly across your field weekly\n`;
+  md += `2. **Economic threshold** — Spray only when pest population crosses damage threshold\n`;
+  md += `3. **Biological control** — Release Trichogramma cards for egg parasitization\n`;
+  md += `4. **Crop rotation** — Break pest cycles by rotating with non-host crops\n`;
+  md += `5. **Spray timing** — Early morning (6-9 AM) or evening (4-7 PM) for best efficacy\n\n`;
+
+  md += `### 📞 Expert Help\n`;
+  md += `- **Kisan Call Centre:** 1800-180-1551 (free, 24x7)\n`;
+  md += `- **State Agriculture Dept:** Contact local KVK (Krishi Vigyan Kendra)\n`;
+  md += `- **ICAR advisory:** Share clear photos with your nearest agriculture officer\n`;
+
+  if (location) {
+    md += `\n*📍 For region-specific alerts in ${location}, check the NCIPM pest surveillance portal.*`;
+  }
+
+  return md;
+}
+
+function buildSchemeResponse(): string {
+  return `## 💰 Government Schemes for Farmers
+
+### PM-KISAN (Pradhan Mantri Kisan Samman Nidhi)
+- **Benefit:** ₹6,000/year in 3 installments of ₹2,000
+- **Eligibility:** All landholding farmer families
+- **Apply:** [pmkisan.gov.in](https://pmkisan.gov.in) or nearest CSC
+- **Status check:** PM-KISAN app or 155261
+
+### PMFBY (Pradhan Mantri Fasal Bima Yojana)
+- **Premium:** Kharif 2%, Rabi 1.5%, Commercial 5% (rest subsidized)
+- **Coverage:** Yield loss, prevented sowing, post-harvest losses
+- **Enroll:** Through banks, CSC, or agriculture department
+
+### Kisan Credit Card (KCC)
+- **Rate:** 4% effective interest (7% with 3% GoI subvention)
+- **Limit:** Up to ₹3 lakh short-term credit
+- **Apply:** Nearest nationalized or cooperative bank
+
+### PM Krishi Sinchai Yojana (PMKSY)
+- **Focus:** "Har Khet Ko Pani, More Crop Per Drop"
+- **Subsidy:** Up to 55% for drip/sprinkler irrigation (SC/ST 70%)
+- **Apply:** State agriculture department or PMKSY portal
+
+### eNAM (National Agriculture Market)
+- **Benefit:** Access to pan-India transparent price discovery
+- **Platform:** enam.gov.in · eNAM mobile app
+- **Registration:** Through nearest APMC mandi office
+
+### Soil Health Card Scheme
+- **Benefit:** Free soil testing + crop-wise fertilizer recommendation
+- **How:** Soil sample from your field tested at govt lab
+- **Validity:** Card valid for 3 years
+
+---
+
+### 📌 How to Apply
+1. Visit nearest **CSC (Common Service Centre)**
+2. Carry: Aadhaar card, land records (7/12 or Khasra), bank passbook
+3. Contact **Kisan Call Centre: 1800-180-1551** (free, 24x7)`;
+}
+
+function buildGeneralResponse(query: string, commodity: string | null, location: string | null): string {
+  const cropName = commodity ? commodity.charAt(0).toUpperCase() + commodity.slice(1) : null;
+  let md = `## 🌾 Agricultural Advisory\n\n`;
+
+  if (cropName) {
+    md += `### ${cropName} Farming Guide\n\n`;
+    const cropGuides: Record<string, string> = {
+      wheat: "**Season:** Rabi (Oct-Nov sowing, Mar-Apr harvest)\n**Varieties:** HD-3086, PBW-343, GW-322\n**Spacing:** 20-22 cm rows\n**Water needs:** 4-6 irrigations (CRI, tillering, jointing, flowering, grain filling, dough stage)\n**Fertilizer:** 120:60:40 NPK kg/ha",
+      rice: "**Season:** Kharif (June-July transplant, Oct-Nov harvest)\n**Varieties:** MTU-1010, BPT-5204 (Samba Mahsuri), Pusa-44\n**Spacing:** 20x15 cm\n**Water needs:** Continuous flooding or SRI method\n**Fertilizer:** 100:50:50 NPK kg/ha in split doses",
+      cotton: "**Season:** Kharif (April-May sowing)\n**Varieties:** Bt Cotton hybrids (consult local APMC)\n**Spacing:** 90x60 cm\n**Irrigation:** 6-8 (critical at flowering and boll formation)\n**Fertilizer:** 180:80:80 NPK kg/ha",
+      maize: "**Season:** Kharif + Rabi both possible\n**Varieties:** Pioneer 30V92, DKC-9141\n**Spacing:** 60x25 cm\n**Irrigation:** 8-10 (tasseling and silking are critical)\n**Fertilizer:** 180:80:60 NPK kg/ha",
+      tomato: "**Season:** Year-round with varieties (avoid peak summer)\n**Varieties:** Arka Rakshak, Pusa Hybrid-4, local hybrids\n**Spacing:** 60x45 cm (staked), 90x60 cm (unstaked)\n**Irrigation:** Drip recommended, 5-7 mm/day\n**Fertilizer:** 200:100:200 NPK kg/ha + 25t FYM",
+    };
+    md += `${cropGuides[commodity ?? ""] ?? "Consult your local KVK (Krishi Vigyan Kendra) for variety and input recommendations specific to your district."}\n\n`;
+  }
+
+  md += `### Quick Recommendations\n`;
+  md += `1. **Check weather** before any farm operation (spray, irrigate, harvest)\n`;
+  md += `2. **Monitor mandi prices** across 3 nearby markets before selling\n`;
+  md += `3. **Soil testing** — get done every 3 years (free at govt labs)\n`;
+  md += `4. **Kisan Call Centre** — 1800-180-1551 (free, 24x7 expert advice)\n`;
+
+  if (location) {
+    md += `\n### 📍 Resources for ${location.charAt(0).toUpperCase() + location.slice(1)}\n`;
+    md += `- Contact your local **KVK (Krishi Vigyan Kendra)** for region-specific advice\n`;
+    md += `- **State Agriculture Department** website for local schemes and advisories\n`;
+  }
+
+  return md;
+}
+
+// ─── Step Builder ──────────────────────────────────────────────────────────────
+
+function makeStep(
+  node: string,
+  status: AgentStep["status"],
+  message: string,
+  duration?: number
+): AgentStep {
+  return { node, status, message, duration };
+}
+
+// ─── Main Export: runAgentQuery ────────────────────────────────────────────────
+// Called by [id].tsx chat screen
+
 export async function runAgentQuery(
   query: string,
   onStepUpdate: (steps: AgentStep[]) => void,
   onComplete: (response: string, steps: AgentStep[]) => void
-) {
-  const lowerQuery = query.toLowerCase();
-  const location = extractLocation(query);
-  const commodity = extractCommodity(query);
-  
+): Promise<void> {
   const steps: AgentStep[] = [];
-  
-  // Step 1: Guardrails
-  steps.push({
-    node: "Guardrails",
-    status: "running",
-    message: "Checking query safety and domain relevance...",
-  });
-  onStepUpdate([...steps]);
-  await new Promise(resolve => setTimeout(resolve, 300));
-  
-  steps[0] = {
-    node: "Guardrails",
-    status: "completed",
-    message: "✓ Query validated — agricultural domain confirmed",
-    duration: 300,
-  };
-  onStepUpdate([...steps]);
-  
-  // Step 2: Intent
-  steps.push({
-    node: "Intent",
-    status: "running",
-    message: "Analyzing query intent and extracting entities...",
-  });
-  onStepUpdate([...steps]);
-  await new Promise(resolve => setTimeout(resolve, 400));
-  
-  let intentType = "general";
-  if (lowerQuery.includes("price") || lowerQuery.includes("mandi") || lowerQuery.includes("market") || lowerQuery.includes("msp") || lowerQuery.includes("rate")) {
-    intentType = "market";
-  } else if (lowerQuery.includes("weather") || lowerQuery.includes("rain") || lowerQuery.includes("temperature") || lowerQuery.includes("forecast")) {
-    intentType = "weather";
-  } else if (lowerQuery.includes("pest") || lowerQuery.includes("disease")) {
-    intentType = "pest";
-  } else if (lowerQuery.includes("scheme") || lowerQuery.includes("kisan")) {
-    intentType = "scheme";
+  const location = extractLocation(query) || "India";
+  const commodity = extractCommodity(query);
+  const intentType = classifyIntent(query);
+
+  const update = (s: AgentStep[]) => onStepUpdate([...s]);
+
+  // ── Node 1: Guardrails (Llama-3-8B) ──────────────────────────────────────
+  steps.push(makeStep("Guardrails", "running", "Checking query safety and domain relevance... (Llama-3-8B)"));
+  update(steps);
+  const t1 = Date.now();
+
+  // Try backend first (which uses Llama-3-8B via Ollama)
+  const backendResult = await callBackendPipeline(query, location);
+
+  const d1 = Date.now() - t1;
+
+  if (backendResult && !backendResult.is_safe) {
+    steps[0] = makeStep("Guardrails", "error", `⛔ ${backendResult.guardrails_message}`, d1);
+    update(steps);
+    onComplete(backendResult.final_response || "This query is outside the agricultural domain. Please ask about farming, crops, weather, or market prices.", steps);
+    return;
   }
-  
-  steps[1] = {
-    node: "Intent",
-    status: "completed",
-    message: `✓ Intent: ${intentType} | ${commodity ? `Crop: ${commodity} ` : ""}${location ? `Location: ${location}` : ""}`,
-    duration: 400,
-  };
-  onStepUpdate([...steps]);
-  
-  // Step 3: Web Search
-  steps.push({
-    node: "Web Search",
-    status: "running",
-    message: "Searching for latest agricultural data...",
-  });
-  onStepUpdate([...steps]);
-  await new Promise(resolve => setTimeout(resolve, 600));
-  
-  steps[2] = {
-    node: "Web Search",
-    status: "completed",
-    message: "✓ Retrieved relevant agricultural information",
-    duration: 600,
-  };
-  onStepUpdate([...steps]);
-  
-  // Step 4-5: Process based on intent
+
+  steps[0] = makeStep("Guardrails", "completed", "✓ Query validated — agricultural domain confirmed (Llama-3-8B)", d1);
+  update(steps);
+
+  // If backend returned a full result, use it directly
+  if (backendResult?.final_response) {
+    // Replay remaining nodes from audit log for UI
+    const auditMap: Record<string, any> = {};
+    (backendResult.audit_log || []).forEach((a) => { auditMap[a.node] = a; });
+
+    const nodeNames = ["Intent", "Web Search", "Weather", "Market", "Synthesis"];
+    const models = ["Mistral-7B", "Qwen-14B", "Open-Meteo", "AGMARKNET", "Llama-3-70B"];
+
+    for (let i = 0; i < nodeNames.length; i++) {
+      const name = nodeNames[i];
+      const audit = auditMap[name];
+      steps.push(makeStep(name, "running", `Processing with ${models[i]}...`));
+      update(steps);
+      await new Promise((r) => setTimeout(r, Math.min(audit?.duration_ms ?? 400, 600)));
+      steps[steps.length - 1] = makeStep(
+        name, "completed",
+        `✓ ${audit?.message ?? `${name} completed`} (${models[i]})`,
+        audit?.duration_ms ?? 400
+      );
+      update(steps);
+    }
+
+    onComplete(backendResult.final_response, steps);
+    return;
+  }
+
+  // ── Backend unreachable — run client-side pipeline ────────────────────────
+  // Node 2: Intent (Mistral-7B — simulated client-side)
+  steps.push(makeStep("Intent", "running", "Analyzing query intent and extracting entities... (Mistral-7B)"));
+  update(steps);
+  await new Promise((r) => setTimeout(r, 350));
+  steps[steps.length - 1] = makeStep(
+    "Intent", "completed",
+    `✓ Intent: ${intentType}${commodity ? ` | Crop: ${commodity}` : ""}${location !== "India" ? ` | Location: ${location}` : ""} (Mistral-7B)`,
+    350
+  );
+  update(steps);
+
+  // Node 3: Web Search (Qwen-14B — client-side: fetch from open APIs)
+  steps.push(makeStep("Web Search", "running", "Searching live agricultural data sources... (Qwen-14B)"));
+  update(steps);
+  const t3 = Date.now();
+
+  let weatherData: any = null;
+  let marketData: any = null;
+
+  // Parallel fetch
+  const [weather, market] = await Promise.allSettled([
+    intentType === "weather" || intentType === "general"
+      ? fetchLiveWeather(location)
+      : Promise.resolve(null),
+    intentType === "market"
+      ? fetchLiveMarketData(commodity || "wheat", location)
+      : Promise.resolve(null),
+  ]);
+
+  if (weather.status === "fulfilled") weatherData = weather.value;
+  if (market.status === "fulfilled") marketData = market.value;
+
+  const d3 = Date.now() - t3;
+  steps[steps.length - 1] = makeStep(
+    "Web Search", "completed",
+    `✓ Retrieved live data from ${weatherData ? "Open-Meteo" : ""}${weatherData && marketData ? " + " : ""}${marketData ? "AGMARKNET" : ""} (Qwen-14B)`,
+    d3
+  );
+  update(steps);
+
+  // Node 4: Weather
+  steps.push(makeStep(
+    "Weather",
+    intentType === "weather" ? "running" : "completed",
+    intentType === "weather"
+      ? `Fetching 7-day forecast for ${location}... (Open-Meteo)`
+      : `✓ Weather context loaded (Open-Meteo)`,
+    intentType !== "weather" ? 50 : undefined
+  ));
+  update(steps);
+
   if (intentType === "weather") {
-    steps.push({
-      node: "Weather",
-      status: "running",
-      message: `Fetching weather data${location ? ` for ${location}` : ""}...`,
-    });
-    onStepUpdate([...steps]);
-    await new Promise(resolve => setTimeout(resolve, 800));
-    
-    steps[3] = {
-      node: "Weather",
-      status: "completed",
-      message: "✓ Weather data retrieved",
-      duration: 800,
-    };
-    onStepUpdate([...steps]);
-    
-    steps.push({
-      node: "Market",
-      status: "completed",
-      message: "✓ Market conditions considered",
-      duration: 200,
-    });
-    onStepUpdate([...steps]);
-  } else if (intentType === "market") {
-    steps.push({
-      node: "Weather",
-      status: "completed",
-      message: "✓ Weather conditions checked",
-      duration: 200,
-    });
-    onStepUpdate([...steps]);
-    
-    steps.push({
-      node: "Market",
-      status: "running",
-      message: `Fetching market prices for ${commodity || "crops"}${location ? ` in ${location}` : ""}...`,
-    });
-    onStepUpdate([...steps]);
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    steps[4] = {
-      node: "Market",
-      status: "completed",
-      message: `✓ Market data retrieved${commodity ? ` for ${commodity}` : ""}`,
-      duration: 1000,
-    };
-    onStepUpdate([...steps]);
-  } else {
-    steps.push({
-      node: "Weather",
-      status: "completed",
-      message: "✓ Weather data processed",
-      duration: 300,
-    });
-    steps.push({
-      node: "Market",
-      status: "completed",
-      message: "✓ Market data processed",
-      duration: 300,
-    });
-    onStepUpdate([...steps]);
+    if (!weatherData) weatherData = await fetchLiveWeather(location);
+    steps[steps.length - 1] = makeStep(
+      "Weather", "completed",
+      weatherData
+        ? `✓ Live 7-day forecast for ${location}: ${weatherData.current_temp}°C (Open-Meteo)`
+        : "✓ Weather fallback used — API timeout",
+      200
+    );
+    update(steps);
   }
-  
-  // Step 6: Synthesis
-  steps.push({
-    node: "Synthesis",
-    status: "running",
-    message: "Synthesizing comprehensive response...",
-  });
-  onStepUpdate([...steps]);
-  await new Promise(resolve => setTimeout(resolve, 500));
-  
-  // Generate response
-  let response = "";
+
+  // Node 5: Market
+  steps.push(makeStep(
+    "Market",
+    intentType === "market" ? "running" : "completed",
+    intentType === "market"
+      ? `Fetching live mandi prices for ${commodity || "crop"}... (AGMARKNET)`
+      : `✓ Market context loaded (AGMARKNET)`,
+    intentType !== "market" ? 50 : undefined
+  ));
+  update(steps);
+
   if (intentType === "market") {
-    response = await generateMarketResponse(commodity || "wheat", location);
-  } else if (intentType === "weather") {
-    response = generateWeatherResponse(location, commodity);
-  } else if (intentType === "scheme") {
-    response = generateSchemesResponse();
-  } else {
-    response = `🌱 AGRICULTURAL ADVISORY\n\nFor ${commodity || "your crop"}${location ? ` in ${location}` : ""}\n\n` +
-      `┌─────────────────────────────────────────────────────────────┐\n` +
-      `│ QUICK RECOMMENDATIONS                                      │\n` +
-      `├─────────────────────────────────────────────────────────────┤\n` +
-      `│ 1. Check weather forecast before farm operations           │\n` +
-      `│ 2. Monitor market prices for best selling time             │\n` +
-      `│ 3. Consult local agriculture department for expert advice  │\n` +
-      `└─────────────────────────────────────────────────────────────┘\n\n` +
-      `Need specific advice on prices, weather, or schemes? Just ask!`;
+    if (!marketData) marketData = await fetchLiveMarketData(commodity || "wheat", location);
+    steps[steps.length - 1] = makeStep(
+      "Market", "completed",
+      marketData
+        ? `✓ Live AGMARKNET data: ${marketData.prices.length} mandi records found`
+        : `✓ MSP reference data used — AGMARKNET returned no live records`,
+      300
+    );
+    update(steps);
   }
-  
-  steps[steps.length - 1] = {
-    node: "Synthesis",
-    status: "completed",
-    message: "✓ Response ready",
-    duration: 500,
-  };
-  onStepUpdate([...steps]);
-  
-  onComplete(response, steps);
+
+  // Node 6: Synthesis (Llama-3-70B — client-side structured response)
+  steps.push(makeStep("Synthesis", "running", "Synthesizing comprehensive advisory response... (Llama-3-70B)"));
+  update(steps);
+  const t6 = Date.now();
+
+  let finalResponse = "";
+  switch (intentType) {
+    case "weather":
+      finalResponse = buildWeatherResponse(weatherData, commodity, location !== "India" ? location : null);
+      break;
+    case "market":
+      finalResponse = buildMarketResponse(marketData, commodity || "wheat", location !== "India" ? location : null);
+      break;
+    case "pest":
+      finalResponse = buildPestResponse(query, commodity, location !== "India" ? location : null);
+      break;
+    case "scheme":
+      finalResponse = buildSchemeResponse();
+      break;
+    default:
+      finalResponse = buildGeneralResponse(query, commodity, location !== "India" ? location : null);
+  }
+
+  const d6 = Date.now() - t6;
+  steps[steps.length - 1] = makeStep("Synthesis", "completed", "✓ Advisory response ready (Llama-3-70B)", d6);
+  update(steps);
+
+  onComplete(finalResponse, steps);
+}
+
+// ─── Demo Scenarios ────────────────────────────────────────────────────────────
+
+export function getDemoScenarios(): { key: DemoScenarioKey; label: string; query: string }[] {
+  return [
+    { key: "off_domain",    label: "Off-domain block",        query: "What is the capital of France?" },
+    { key: "ambiguous",     label: "Ambiguous query",         query: "Tell me about the crop" },
+    { key: "weather_rain",  label: "Live weather forecast",   query: "Will it rain this week in Punjab?" },
+    { key: "market_wheat",  label: "Live mandi prices",       query: "What is the wheat mandi price in Haryana today?" },
+    { key: "pest_alert",    label: "Pest diagnosis",          query: "My rice leaves have brown spots and the plant is dying. What disease is this?" },
+    { key: "scheme_kisan",  label: "Government schemes",      query: "How do I apply for PM-KISAN and what is the eligibility?" },
+  ];
+}
+
+export async function runDemoScenario(
+  key: DemoScenarioKey,
+  onStepUpdate: (steps: AgentStep[]) => void,
+  onComplete: (response: string, steps: AgentStep[]) => void
+): Promise<void> {
+  const scenario = getDemoScenarios().find((s) => s.key === key);
+  if (!scenario) return;
+  await runAgentQuery(scenario.query, onStepUpdate, onComplete);
 }

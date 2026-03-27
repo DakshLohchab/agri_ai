@@ -7,10 +7,12 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "@/constants/colors";
@@ -19,19 +21,42 @@ import { TypingIndicator } from "@/components/TypingIndicator";
 import { useChat, Message, AgentStep } from "@/context/ChatContext";
 import { runAgentQuery } from "@/services/langgraph";
 
+const PIPELINE_COLORS = [
+  Colors.guardrails,
+  Colors.intent,
+  Colors.webSearch,
+  Colors.weather,
+  Colors.market,
+  Colors.synthesis,
+];
+
+const SUGGESTIONS = [
+  { q: "Rain this week in Punjab?", icon: "cloud-rain" },
+  { q: "Wheat mandi price today", icon: "trending-up" },
+  { q: "Pest alert for cotton", icon: "alert-triangle" },
+  { q: "PM-KISAN eligibility", icon: "file-text" },
+  { q: "Soybean price in MP", icon: "package" },
+  { q: "Fertilizer dosage for rice", icon: "droplet" },
+];
+
 export default function ChatScreen() {
   const { id, preQuery } = useLocalSearchParams<{ id: string; preQuery?: string }>();
   const { getConversation, addMessage, updateMessage } = useChat();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const isWeb = Platform.OS === "web";
+  const isWide = width >= 768;
+
   const [inputText, setInputText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const flatRef = useRef<FlatList>(null);
+  const inputRef = useRef<TextInput>(null);
 
   const conversation = getConversation(id);
   const messages = conversation?.messages ?? [];
 
-  const botPad = Platform.OS === "web" ? 34 : insets.bottom;
-  const topPad = Platform.OS === "web" ? 67 : insets.top;
+  const botPad = isWeb ? 24 : insets.bottom;
+  const topPad = isWeb ? 0 : insets.top;
 
   useEffect(() => {
     if (preQuery && messages.length === 0) {
@@ -45,7 +70,9 @@ export default function ChatScreen() {
       if (!trimmed || isTyping) return;
 
       setInputText("");
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      if (Platform.OS !== "web") {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      }
 
       const userMsg: Message = {
         id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
@@ -66,110 +93,128 @@ export default function ChatScreen() {
       };
       addMessage(id, aiMsg);
 
-      await runAgentQuery(
-        trimmed,
-        (steps: AgentStep[]) => {
-          updateMessage(id, aiMsgId, { agentSteps: steps });
-        },
-        (response: string, steps: AgentStep[]) => {
-          updateMessage(id, aiMsgId, { content: response, agentSteps: steps });
-          setIsTyping(false);
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }
-      );
+      try {
+        await runAgentQuery(
+          trimmed,
+          (steps: AgentStep[]) => {
+            updateMessage(id, aiMsgId, { agentSteps: steps });
+          },
+          (response: string, steps: AgentStep[]) => {
+            updateMessage(id, aiMsgId, { content: response, agentSteps: steps });
+            setIsTyping(false);
+            if (Platform.OS !== "web") {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            }
+          }
+        );
+      } catch (err) {
+        updateMessage(id, aiMsgId, {
+          content: "Sorry, something went wrong processing your query. Please try again.",
+          agentSteps: [],
+        });
+        setIsTyping(false);
+      }
     },
     [id, isTyping, addMessage, updateMessage]
   );
 
   const reversedMessages = [...messages].reverse();
+  const maxContentWidth = isWeb && isWide ? 800 : undefined;
 
   return (
     <View style={[styles.container, { paddingTop: topPad }]}>
-      <View style={styles.header}>
-        <Pressable style={styles.backBtn} onPress={() => router.back()}>
-          <Feather name="arrow-left" size={20} color={Colors.text} />
-        </Pressable>
-        <View style={styles.headerInfo}>
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            {conversation?.title ?? "New Query"}
-          </Text>
-          <View style={styles.headerBadge}>
-            <View style={styles.activeDot} />
-            <Text style={styles.headerSubtitle}>6-agent pipeline</Text>
+      {/* ── Header ── */}
+      <View style={[styles.header, isWeb && isWide && styles.headerWide]}>
+        <View style={[styles.headerInner, maxContentWidth ? { maxWidth: maxContentWidth, alignSelf: "center", width: "100%" } : null]}>
+          <Pressable style={styles.backBtn} onPress={() => router.back()}>
+            <Feather name="arrow-left" size={20} color={Colors.text} />
+          </Pressable>
+          <View style={styles.headerInfo}>
+            <Text style={styles.headerTitle} numberOfLines={1}>
+              {conversation?.title ?? "New Query"}
+            </Text>
+            <View style={styles.headerBadge}>
+              <View style={styles.activeDot} />
+              <Text style={styles.headerSubtitle}>6-agent LangGraph pipeline</Text>
+            </View>
           </View>
+          <Pressable
+            style={styles.agentsBtn}
+            onPress={() => router.push("/(tabs)/agents")}
+          >
+            <Feather name="cpu" size={18} color={Colors.primary} />
+          </Pressable>
         </View>
-        <Pressable
-          style={styles.agentsBtn}
-          onPress={() => router.push("/(tabs)/agents")}
-        >
-          <Feather name="cpu" size={18} color={Colors.primary} />
-        </Pressable>
       </View>
 
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={topPad + 56}
+        keyboardVerticalOffset={topPad + 60}
       >
         {messages.length === 0 ? (
-          <View style={styles.emptyChat}>
-            <View style={styles.emptyContent}>
+          /* ── Empty state ── */
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={[styles.emptyScroll, isWeb && isWide && { paddingHorizontal: 40 }]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={[styles.emptyContent, maxContentWidth ? { maxWidth: maxContentWidth, alignSelf: "center", width: "100%" } : null]}>
               <View style={styles.emptyChatIcon}>
                 <Feather name="cpu" size={40} color={Colors.primary} />
               </View>
               <Text style={styles.emptyChatTitle}>AgriAdvisor AI</Text>
               <Text style={styles.emptyChatDesc}>
-                Powered by 6 specialized AI agents working together
+                Powered by 6 specialized AI agents — Llama-3-8B, Mistral-7B, Qwen-14B, and Llama-3-70B — with live weather and market data
               </Text>
 
-              <View style={styles.pipelineIndicator}>
-                <View style={[styles.pipelineStep, { backgroundColor: Colors.guardrails }]}>
-                  <Text style={styles.pipelineNumber}>1</Text>
-                </View>
-                <View style={styles.pipelineConnector} />
-                <View style={[styles.pipelineStep, { backgroundColor: Colors.intent }]}>
-                  <Text style={styles.pipelineNumber}>2</Text>
-                </View>
-                <View style={styles.pipelineConnector} />
-                <View style={[styles.pipelineStep, { backgroundColor: Colors.webSearch }]}>
-                  <Text style={styles.pipelineNumber}>3</Text>
-                </View>
-                <View style={styles.pipelineConnector} />
-                <View style={[styles.pipelineStep, { backgroundColor: Colors.weather }]}>
-                  <Text style={styles.pipelineNumber}>4</Text>
-                </View>
+              {/* Pipeline nodes */}
+              <View style={styles.pipelineRow}>
+                {PIPELINE_COLORS.map((color, i) => (
+                  <React.Fragment key={i}>
+                    <View style={[styles.pipelineStep, { backgroundColor: color }]}>
+                      <Text style={styles.pipelineNumber}>{i + 1}</Text>
+                    </View>
+                    {i < PIPELINE_COLORS.length - 1 && (
+                      <View style={styles.pipelineConnector} />
+                    )}
+                  </React.Fragment>
+                ))}
               </View>
 
-              <View style={styles.pipelineIndicator}>
-                <View style={[styles.pipelineStep, { backgroundColor: Colors.market }]}>
-                  <Text style={styles.pipelineNumber}>5</Text>
-                </View>
-                <View style={styles.pipelineConnector} />
-                <View style={[styles.pipelineStep, { backgroundColor: Colors.synthesis }]}>
-                  <Text style={styles.pipelineNumber}>6</Text>
-                </View>
-                <View style={styles.pipelineConnectorEnd} />
-              </View>
-
-              <View style={styles.suggestionRow}>
-                {[
-                  { q: "Rain this week?", icon: "cloud-rain" },
-                  { q: "Wheat price", icon: "trending-up" },
-                  { q: "Pest alerts", icon: "alert-triangle" },
-                ].map(({ q, icon }) => (
+              {/* Suggestion chips — wrap on wide screens */}
+              <View style={[styles.suggestionGrid, isWide && styles.suggestionGridWide]}>
+                {SUGGESTIONS.map(({ q, icon }) => (
                   <Pressable
                     key={q}
-                    style={styles.suggestionChip}
+                    style={[styles.suggestionChip, isWide && styles.suggestionChipWide]}
                     onPress={() => sendMessage(q)}
                   >
-                    <Feather name={icon as any} size={16} color={Colors.primary} />
+                    <Feather name={icon as any} size={15} color={Colors.primary} />
                     <Text style={styles.suggestionText}>{q}</Text>
                   </Pressable>
                 ))}
               </View>
+
+              {/* Feature pills */}
+              <View style={styles.featureRow}>
+                {[
+                  { label: "Live weather", icon: "cloud" },
+                  { label: "AGMARKNET prices", icon: "trending-up" },
+                  { label: "Pest diagnosis", icon: "alert-triangle" },
+                  { label: "Gov schemes", icon: "shield" },
+                ].map((f) => (
+                  <View key={f.label} style={styles.featurePill}>
+                    <Feather name={f.icon as any} size={11} color={Colors.textMuted} />
+                    <Text style={styles.featurePillText}>{f.label}</Text>
+                  </View>
+                ))}
+              </View>
             </View>
-          </View>
+          </ScrollView>
         ) : (
+          /* ── Message list ── */
           <FlatList
             ref={flatRef}
             data={reversedMessages}
@@ -179,47 +224,79 @@ export default function ChatScreen() {
                 return <TypingIndicator />;
               }
               if (item.content === "" && item.role === "assistant") return null;
-              return <MessageBubble message={item} />;
+              return (
+                <View style={maxContentWidth ? { maxWidth: maxContentWidth, alignSelf: "center", width: "100%" } : undefined}>
+                  <MessageBubble message={item} />
+                </View>
+              );
             }}
             inverted
-            contentContainerStyle={[styles.messageList, { paddingBottom: 8 }]}
+            contentContainerStyle={[
+              styles.messageList,
+              isWeb && isWide && { paddingHorizontal: 40 },
+            ]}
             keyboardDismissMode="interactive"
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
-            ListHeaderComponent={isTyping ? <TypingIndicator /> : null}
+            ListHeaderComponent={isTyping ? (
+              <View style={maxContentWidth ? { maxWidth: maxContentWidth, alignSelf: "center", width: "100%" } : undefined}>
+                <TypingIndicator />
+              </View>
+            ) : null}
           />
         )}
 
-        <View style={[styles.inputBar, { paddingBottom: botPad + 8 }]}>
-          <TextInput
-            style={styles.input}
-            value={inputText}
-            onChangeText={setInputText}
-            placeholder="Ask about crops, weather, prices..."
-            placeholderTextColor={Colors.textMuted}
-            multiline
-            maxLength={500}
-            onSubmitEditing={() => sendMessage(inputText)}
-            returnKeyType="send"
-            editable={!isTyping}
-          />
-          <Pressable
-            style={({ pressed }) => [
-              styles.sendBtn,
-              {
-                backgroundColor: inputText.trim() && !isTyping ? Colors.primary : Colors.surfaceElevated,
-                opacity: pressed ? 0.8 : 1,
-              },
-            ]}
-            onPress={() => sendMessage(inputText)}
-            disabled={!inputText.trim() || isTyping}
-          >
-            <Feather
-              name="send"
-              size={18}
-              color={inputText.trim() && !isTyping ? Colors.white : Colors.textMuted}
+        {/* ── Input bar ── */}
+        <View style={[styles.inputBarWrap, { paddingBottom: botPad + 8 }]}>
+          <View style={[
+            styles.inputBar,
+            isWeb && isWide && { maxWidth: maxContentWidth, alignSelf: "center", width: "100%" },
+          ]}>
+            <TextInput
+              ref={inputRef}
+              style={[styles.input, isWeb && { outlineWidth: 0 } as any]}
+              value={inputText}
+              onChangeText={setInputText}
+              placeholder="Ask about crops, weather, mandi prices..."
+              placeholderTextColor={Colors.textMuted}
+              multiline
+              maxLength={500}
+              onSubmitEditing={Platform.OS === "web" ? undefined : () => sendMessage(inputText)}
+              returnKeyType={Platform.OS === "web" ? "default" : "send"}
+              editable={!isTyping}
+              onKeyPress={
+                Platform.OS === "web"
+                  ? (e: any) => {
+                      if (e.nativeEvent.key === "Enter" && !e.nativeEvent.shiftKey) {
+                        e.preventDefault?.();
+                        sendMessage(inputText);
+                      }
+                    }
+                  : undefined
+              }
             />
-          </Pressable>
+            <Pressable
+              style={({ pressed }) => [
+                styles.sendBtn,
+                {
+                  backgroundColor:
+                    inputText.trim() && !isTyping ? Colors.primary : Colors.surfaceElevated,
+                  opacity: pressed ? 0.8 : 1,
+                },
+              ]}
+              onPress={() => sendMessage(inputText)}
+              disabled={!inputText.trim() || isTyping}
+            >
+              <Feather
+                name={isTyping ? "loader" : "send"}
+                size={18}
+                color={inputText.trim() && !isTyping ? Colors.white : Colors.textMuted}
+              />
+            </Pressable>
+          </View>
+          {isWeb && (
+            <Text style={styles.webHint}>Press Enter to send · Shift+Enter for new line</Text>
+          )}
         </View>
       </KeyboardAvoidingView>
     </View>
@@ -228,15 +305,21 @@ export default function ChatScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
+
   header: {
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.primary + "22",
+    backgroundColor: Colors.primary + "08",
+  },
+  headerWide: {
+    paddingHorizontal: 24,
+  },
+  headerInner: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 16,
     paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.primary + "22",
     gap: 12,
-    backgroundColor: Colors.primary + "08",
   },
   backBtn: {
     width: 40,
@@ -263,17 +346,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.primary + "44",
   },
-  emptyChat: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 24,
-  },
-  emptyContent: {
-    alignItems: "center",
-    gap: 20,
-    maxWidth: 320,
-  },
+
+  emptyScroll: { flexGrow: 1, justifyContent: "center", paddingVertical: 32, paddingHorizontal: 24 },
+  emptyContent: { alignItems: "center", gap: 20 },
   emptyChatIcon: {
     width: 80,
     height: 80,
@@ -291,68 +366,64 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 22,
     fontFamily: "Inter_400Regular",
+    maxWidth: 360,
   },
-  suggestionRow: { 
-    flexDirection: "row", 
-    gap: 10, 
+
+  pipelineRow: { flexDirection: "row", alignItems: "center", justifyContent: "center" },
+  pipelineStep: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
     justifyContent: "center",
-    marginTop: 12,
   },
+  pipelineNumber: { fontSize: 13, fontFamily: "Inter_700Bold", color: Colors.white },
+  pipelineConnector: { width: 20, height: 2, backgroundColor: Colors.surfaceBorder },
+
+  suggestionGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, justifyContent: "center" },
+  suggestionGridWide: { maxWidth: 680 },
   suggestionChip: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 11,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     backgroundColor: Colors.surface,
-    borderRadius: 24,
+    borderRadius: 22,
     borderWidth: 1.5,
-    borderColor: Colors.primary + "55",
+    borderColor: Colors.primary + "44",
   },
-  suggestionText: { 
-    fontSize: 13, 
-    color: Colors.primary, 
-    fontFamily: "Inter_600SemiBold" 
-  },
-  pipelineIndicator: { 
-    flexDirection: "row", 
-    alignItems: "center", 
-    justifyContent: "center",
-    gap: 0,
-    marginBottom: 8,
-  },
-  pipelineStep: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+  suggestionChipWide: { paddingHorizontal: 18 },
+  suggestionText: { fontSize: 13, color: Colors.primary, fontFamily: "Inter_600SemiBold" },
+
+  featureRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, justifyContent: "center" },
+  featurePill: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: Colors.surface,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: Colors.surfaceBorder,
   },
-  pipelineNumber: {
-    fontSize: 13,
-    fontFamily: "Inter_700Bold",
-    color: Colors.white,
+  featurePillText: { fontSize: 11, color: Colors.textMuted, fontFamily: "Inter_400Regular" },
+
+  messageList: { paddingTop: 12, paddingBottom: 12, paddingHorizontal: 16 },
+
+  inputBarWrap: {
+    borderTopWidth: 1,
+    borderTopColor: Colors.surfaceBorder,
+    backgroundColor: Colors.background,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    gap: 6,
   },
-  pipelineConnector: {
-    width: 18,
-    height: 2,
-    backgroundColor: Colors.surfaceBorder,
-  },
-  pipelineConnectorEnd: {
-    width: 18,
-    height: 2,
-    backgroundColor: "transparent",
-  },
-  messageList: { paddingTop: 12, paddingBottom: 12 },
   inputBar: {
     flexDirection: "row",
     alignItems: "flex-end",
     gap: 10,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: Colors.surfaceBorder,
-    backgroundColor: Colors.background,
   },
   input: {
     flex: 1,
@@ -374,5 +445,11 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     alignItems: "center",
     justifyContent: "center",
+  },
+  webHint: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    fontFamily: "Inter_400Regular",
+    textAlign: "center",
   },
 });
