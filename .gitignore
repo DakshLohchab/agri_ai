@@ -52,9 +52,16 @@ Thumbs.db
 .env
 
 #docs
-docs/agriadvisor-architecture.aux 
-docs/agriadvisor-architecture.fdb_latexmk 
-docs/agriadvisor-architecture.fls 
-docs/agriadvisor-architecture.log 
-docs/agriadvisor-architecture.out 
-docs/agriadvisor-architecture.synctex.gz
+docs/Architecture/agriadvisor-architecture.aux 
+docs/Architecture/agriadvisor-architecture.fdb_latexmk 
+docs/Architecture/agriadvisor-architecture.fls 
+docs/Architecture/agriadvisor-architecture.log 
+docs/Architecture/agriadvisor-architecture.out 
+docs/Architecture/agriadvisor-architecture.synctex.gz
+
+docs/ImpactModel/agriadvisor-impactmodel.aux 
+docs/ImpactModel/agriadvisor-impactmodel.fdb_latexmk 
+docs/ImpactModel/agriadvisor-impactmodel.fls 
+docs/ImpactModel/agriadvisor-impactmodel.log 
+docs/ImpactModel/agriadvisor-impactmodel.out 
+docs/ImpactModel/agriadvisor-impactmodel.synctex.gz
