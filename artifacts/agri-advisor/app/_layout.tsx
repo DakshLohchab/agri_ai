@@ -31,17 +31,18 @@ function RootLayoutNav() {
       screenOptions={{
         headerShown: false,
         contentStyle: { backgroundColor: Colors.background },
+        animation: "fade",
       }}
     >
       <Stack.Screen name="index" />
       <Stack.Screen
         name="(auth)"
-        options={{ presentation: "modal", headerShown: false }}
+        options={{ presentation: "modal", headerShown: false, animation: "slide_from_bottom" }}
       />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen
         name="chat/[id]"
-        options={{ presentation: "card", headerShown: false }}
+        options={{ presentation: "card", headerShown: false, animation: "fade_from_bottom" }}
       />
     </Stack>
   );

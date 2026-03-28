@@ -1,14 +1,19 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
+import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import React, { useMemo } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { AppBackdrop } from "@/components/AppBackdrop";
+import { ScreenReveal } from "@/components/ScreenReveal";
 import { Colors } from "@/constants/colors";
 import { getTranslations } from "@/constants/translations";
 import { useAuth } from "@/context/AuthContext";
 import { useChat } from "@/context/ChatContext";
 import { useLanguage } from "@/context/LanguageContext";
+import { useLocalizedStrings } from "@/hooks/useLocalizedStrings";
+import { useTabBarSpacing } from "@/hooks/useTabBarSpacing";
 
 const DASHBOARD_CARDS = [
   {
@@ -67,6 +72,23 @@ export default function HomeScreen() {
   const { createConversation, conversations } = useChat();
   const { language } = useLanguage();
   const t = getTranslations(language.code);
+  const ui = useLocalizedStrings({
+    startNewChat: "Start New Chat",
+    todaysDashboard: "Today's Dashboard",
+    dashboardDesc: "A quick read of how the app can support you right now.",
+    continueChats: "Continue Chats",
+    continueChatsDesc: "Jump back into recent conversations without losing context.",
+    noChatsYet: "No chats yet",
+    noChatsDesc: "Start with a quick action or open a fresh chat to begin your first advisory flow.",
+    aiReplied: "AI replied",
+    waitingForReply: "Waiting for reply",
+    exploreLiveDemo: "Explore Live Demo",
+  });
+  const { width } = useWindowDimensions();
+  const isWeb = Platform.OS === "web";
+  const isTablet = width >= 768;
+  const isDesktop = width >= 1180;
+  const tabBarSpacing = useTabBarSpacing();
 
   const quickActions = [
     {
@@ -133,17 +155,28 @@ export default function HomeScreen() {
   };
 
   const greeting = getGreeting(t.goodMorning, t.goodAfternoon, t.goodEvening);
+  const contentStyle = [
+    styles.content,
+    isTablet && styles.contentTablet,
+    isDesktop && styles.contentDesktop,
+    isWeb && styles.contentWeb,
+    !isWeb && { paddingBottom: tabBarSpacing },
+  ];
 
   return (
     <SafeAreaView style={styles.container} edges={["left", "right", "top"]}>
+      <AppBackdrop variant="default" />
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={contentStyle}
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
       >
+        <ScreenReveal delay={20}>
+        <View style={styles.topFrame}>
         <View style={styles.headerRow}>
           <View style={styles.greetingBlock}>
+            <Text style={styles.overline}>Agri control center</Text>
             <Text style={styles.greeting}>{greeting},</Text>
             <Text style={styles.name}>{firstName}</Text>
             <View style={styles.locationRow}>
@@ -158,10 +191,19 @@ export default function HomeScreen() {
             </View>
           </Pressable>
         </View>
+        </View>
+        </ScreenReveal>
 
-        <View style={styles.heroCard}>
+        <ScreenReveal delay={90}>
+        <LinearGradient
+          colors={[Colors.surface, "#16241A", "#102018"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.heroCard}
+        >
           <View style={styles.heroGlowOne} />
           <View style={styles.heroGlowTwo} />
+          <View style={styles.heroGlowThree} />
 
           <View style={styles.heroTop}>
             <View style={styles.heroTextWrap}>
@@ -202,7 +244,7 @@ export default function HomeScreen() {
               onPress={() => startChat()}
             >
               <Feather name="message-square" size={18} color={Colors.white} />
-              <Text style={styles.primaryActionText}>Start New Chat</Text>
+              <Text style={styles.primaryActionText}>{ui.startNewChat}</Text>
             </Pressable>
 
             <Pressable
@@ -213,14 +255,16 @@ export default function HomeScreen() {
               <Text style={styles.secondaryActionText}>{t.viewAgentPipeline}</Text>
             </Pressable>
           </View>
-        </View>
+        </LinearGradient>
+        </ScreenReveal>
 
+        <ScreenReveal delay={150}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Today&apos;s Dashboard</Text>
-          <Text style={styles.sectionDesc}>A quick read of how the app can support you right now.</Text>
+          <Text style={styles.sectionTitle}>{ui.todaysDashboard}</Text>
+          <Text style={styles.sectionDesc}>{ui.dashboardDesc}</Text>
         </View>
 
-        <View style={styles.dashboardGrid}>
+        <View style={[styles.dashboardGrid, isDesktop && styles.dashboardGridDesktop]}>
           <View style={styles.focusCard}>
             <View style={styles.focusHeader}>
               <Text style={styles.focusTitle}>Personalization</Text>
@@ -253,9 +297,12 @@ export default function HomeScreen() {
             </Pressable>
           </View>
 
-          <View style={styles.miniInsightGrid}>
+          <View style={[styles.miniInsightGrid, isDesktop && styles.miniInsightGridDesktop]}>
             {DASHBOARD_CARDS.map((item) => (
-              <View key={item.title} style={styles.miniInsightCard}>
+              <View
+                key={item.title}
+                style={[styles.miniInsightCard, isTablet && styles.miniInsightCardTablet]}
+              >
                 <View style={[styles.miniInsightIcon, { backgroundColor: item.color + "16" }]}>
                   <Feather name={item.icon as any} size={18} color={item.color} />
                 </View>
@@ -265,7 +312,9 @@ export default function HomeScreen() {
             ))}
           </View>
         </View>
+        </ScreenReveal>
 
+        <ScreenReveal delay={210}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>{t.quickQueries}</Text>
           <Text style={styles.sectionDesc}>
@@ -273,12 +322,13 @@ export default function HomeScreen() {
           </Text>
         </View>
 
-        <View style={styles.quickGrid}>
+        <View style={[styles.quickGrid, isDesktop && styles.quickGridDesktop]}>
           {quickActions.map((item) => (
             <Pressable
               key={item.title}
               style={({ pressed }) => [
                 styles.quickCard,
+                isDesktop && styles.quickCardDesktop,
                 {
                   borderColor: item.color + "44",
                   backgroundColor: item.color + "10",
@@ -298,10 +348,12 @@ export default function HomeScreen() {
             </Pressable>
           ))}
         </View>
+        </ScreenReveal>
 
+        <ScreenReveal delay={260}>
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Continue Chats</Text>
-          <Text style={styles.sectionDesc}>Jump back into recent conversations without losing context.</Text>
+          <Text style={styles.sectionTitle}>{ui.continueChats}</Text>
+          <Text style={styles.sectionDesc}>{ui.continueChatsDesc}</Text>
         </View>
 
         {recentConversations.length > 0 ? (
@@ -340,21 +392,23 @@ export default function HomeScreen() {
               <Feather name="message-square" size={20} color={Colors.primary} />
             </View>
             <View style={styles.emptyConversationTextWrap}>
-              <Text style={styles.emptyConversationTitle}>No chats yet</Text>
+              <Text style={styles.emptyConversationTitle}>{ui.noChatsYet}</Text>
               <Text style={styles.emptyConversationBody}>
-                Start with a quick action or open a fresh chat to begin your first advisory flow.
+                {ui.noChatsDesc}
               </Text>
             </View>
           </View>
         )}
+        </ScreenReveal>
 
+        <ScreenReveal delay={320}>
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>{t.aboutAgriAdvisor}</Text>
           <Text style={styles.sectionDesc}>Every answer passes through an explainable 6-node pipeline.</Text>
         </View>
 
         <View style={styles.pipelineCard}>
-          <View style={styles.pipelineRow}>
+          <View style={[styles.pipelineRow, isTablet && styles.pipelineRowTablet]}>
             {AGENT_PIPELINE.map((node, index) => (
               <React.Fragment key={node.name}>
                 <View style={styles.pipelineNodeWrap}>
@@ -381,12 +435,11 @@ export default function HomeScreen() {
           </Text>
 
           <Pressable style={styles.learnBtn} onPress={() => router.push("/(tabs)/agents")}>
-            <Text style={styles.learnBtnText}>Explore Live Demo</Text>
+            <Text style={styles.learnBtnText}>{ui.exploreLiveDemo}</Text>
             <Feather name="arrow-right" size={14} color={Colors.primary} />
           </Pressable>
         </View>
-
-        <View style={{ height: 24 }} />
+        </ScreenReveal>
       </ScrollView>
     </SafeAreaView>
   );
@@ -395,8 +448,30 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   content: { paddingHorizontal: 20, gap: 18, paddingTop: 16, paddingBottom: 32 },
+  contentWeb: { paddingBottom: 48 },
+  contentTablet: { maxWidth: 1120, width: "100%", alignSelf: "center", paddingHorizontal: 28 },
+  contentDesktop: { paddingHorizontal: 36, gap: 22 },
+  topFrame: {
+    padding: 16,
+    borderRadius: 26,
+    borderWidth: 1,
+    borderColor: Colors.surfaceBorder,
+    backgroundColor: Colors.surface + "D9",
+    shadowColor: Colors.black,
+    shadowOpacity: 0.2,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 12 },
+  },
   headerRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" },
   greetingBlock: { gap: 2 },
+  overline: {
+    fontSize: 11,
+    color: Colors.primaryLight,
+    fontFamily: "Inter_600SemiBold",
+    textTransform: "uppercase",
+    letterSpacing: 1.2,
+    marginBottom: 4,
+  },
   greeting: { fontSize: 15, color: Colors.textSecondary, fontFamily: "Inter_400Regular" },
   name: { fontSize: 30, fontFamily: "Inter_700Bold", color: Colors.text, letterSpacing: -0.6 },
   locationRow: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 2 },
@@ -444,6 +519,15 @@ const styles = StyleSheet.create({
     height: 140,
     borderRadius: 70,
     backgroundColor: Colors.weather + "10",
+  },
+  heroGlowThree: {
+    position: "absolute",
+    top: 70,
+    right: "28%",
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    backgroundColor: Colors.secondary + "12",
   },
   heroTop: {
     flexDirection: "row",
@@ -538,6 +622,10 @@ const styles = StyleSheet.create({
     gap: 8,
     backgroundColor: Colors.primary,
     borderRadius: 16,
+    shadowColor: Colors.primary,
+    shadowOpacity: 0.22,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
     paddingVertical: 14,
     paddingHorizontal: 14,
   },
@@ -581,6 +669,10 @@ const styles = StyleSheet.create({
   dashboardGrid: {
     gap: 10,
   },
+  dashboardGridDesktop: {
+    flexDirection: "row",
+    alignItems: "stretch",
+  },
   focusCard: {
     backgroundColor: Colors.surface,
     borderRadius: 20,
@@ -588,6 +680,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.surfaceBorder,
     padding: 16,
     gap: 10,
+    flex: 1,
   },
   focusHeader: {
     flexDirection: "row",
@@ -629,6 +722,9 @@ const styles = StyleSheet.create({
   miniInsightGrid: {
     gap: 10,
   },
+  miniInsightGridDesktop: {
+    flex: 1,
+  },
   miniInsightCard: {
     backgroundColor: Colors.surface,
     borderRadius: 20,
@@ -636,6 +732,9 @@ const styles = StyleSheet.create({
     borderColor: Colors.surfaceBorder,
     padding: 16,
     gap: 8,
+  },
+  miniInsightCardTablet: {
+    minHeight: 132,
   },
   miniInsightIcon: {
     width: 38,
@@ -660,6 +759,9 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 10,
   },
+  quickGridDesktop: {
+    gap: 12,
+  },
   quickCard: {
     width: "47%",
     minWidth: 150,
@@ -668,6 +770,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 14,
     gap: 10,
+    shadowColor: Colors.black,
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+  },
+  quickCardDesktop: {
+    width: "31%",
+    minWidth: 220,
   },
   quickCardTop: {
     flexDirection: "row",
@@ -773,6 +883,9 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: 6,
+  },
+  pipelineRowTablet: {
+    gap: 10,
   },
   pipelineNodeWrap: {
     flex: 1,

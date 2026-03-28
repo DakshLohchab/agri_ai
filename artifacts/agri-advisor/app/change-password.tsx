@@ -15,6 +15,7 @@ import {
 import * as Haptics from "expo-haptics";
 import { Colors } from "@/constants/colors";
 import { AuthService } from "@/services/auth";
+import { useLocalizedStrings } from "@/hooks/useLocalizedStrings";
 
 export default function ChangePasswordScreen() {
   const [currentPassword, setCurrentPassword] = useState("");
@@ -26,33 +27,54 @@ export default function ChangePasswordScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const ui = useLocalizedStrings({
+    currentPasswordRequired: "Current password is required",
+    fillAllFields: "Please fill in all fields",
+    passwordMin: "New password must be at least 6 characters",
+    passwordsMismatch: "Passwords don't match",
+    passwordMustDiffer: "New password must be different from current password",
+    success: "Password changed successfully!",
+    failed: "Failed to change password",
+    title: "Change Password",
+    description:
+      "Enter your current password and choose a new password. Make sure your password is at least 6 characters long and contains a mix of letters and numbers.",
+    currentPassword: "Current Password",
+    newPassword: "New Password",
+    confirmNewPassword: "Confirm New Password",
+    requirementsTitle: "Password Requirements",
+    reqLength: "At least 6 characters",
+    reqMix: "Mix of letters and numbers",
+    reqDifferent: "Different from your current password",
+    changing: "Changing...",
+    changePassword: "Change Password",
+  });
 
   const handleChangePassword = async () => {
     setError("");
     setSuccess("");
 
     if (!currentPassword.trim()) {
-      setError("Current password is required");
+      setError(ui.currentPasswordRequired);
       return;
     }
 
     if (!newPassword.trim() || !confirmPassword.trim()) {
-      setError("Please fill in all fields");
+      setError(ui.fillAllFields);
       return;
     }
 
     if (newPassword.length < 6) {
-      setError("New password must be at least 6 characters");
+      setError(ui.passwordMin);
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      setError("Passwords don't match");
+      setError(ui.passwordsMismatch);
       return;
     }
 
     if (currentPassword === newPassword) {
-      setError("New password must be different from current password");
+      setError(ui.passwordMustDiffer);
       return;
     }
 
@@ -61,7 +83,7 @@ export default function ChangePasswordScreen() {
 
     try {
       await AuthService.changePassword(currentPassword, newPassword);
-      setSuccess("Password changed successfully!");
+      setSuccess(ui.success);
       setTimeout(() => {
         setCurrentPassword("");
         setNewPassword("");
@@ -69,7 +91,7 @@ export default function ChangePasswordScreen() {
         router.back();
       }, 2000);
     } catch (e: any) {
-      setError(e.message || "Failed to change password");
+      setError(e.message || ui.failed);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setIsLoading(false);
@@ -134,7 +156,7 @@ export default function ChangePasswordScreen() {
         >
           <Feather name="arrow-left" size={20} color={Colors.text} />
         </Pressable>
-        <Text style={styles.headerTitle}>Change Password</Text>
+        <Text style={styles.headerTitle}>{ui.title}</Text>
         <View style={{ width: 40 }} />
       </View>
 
@@ -147,13 +169,11 @@ export default function ChangePasswordScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <Text style={styles.description}>
-            Enter your current password and choose a new password. Make sure your password is at least 6 characters long and contains a mix of letters and numbers.
-          </Text>
+          <Text style={styles.description}>{ui.description}</Text>
 
           <View style={styles.formSection}>
             <PasswordField
-              label="Current Password"
+              label={ui.currentPassword}
               value={currentPassword}
               onChangeText={setCurrentPassword}
               show={showCurrentPassword}
@@ -161,7 +181,7 @@ export default function ChangePasswordScreen() {
             />
 
             <PasswordField
-              label="New Password"
+              label={ui.newPassword}
               value={newPassword}
               onChangeText={setNewPassword}
               show={showNewPassword}
@@ -169,7 +189,7 @@ export default function ChangePasswordScreen() {
             />
 
             <PasswordField
-              label="Confirm New Password"
+              label={ui.confirmNewPassword}
               value={confirmPassword}
               onChangeText={setConfirmPassword}
               show={showConfirmPassword}
@@ -194,19 +214,19 @@ export default function ChangePasswordScreen() {
 
           {/* Password Requirements */}
           <View style={styles.requirementsBox}>
-            <Text style={styles.requirementsTitle}>Password Requirements</Text>
+            <Text style={styles.requirementsTitle}>{ui.requirementsTitle}</Text>
             <View style={styles.requirementItem}>
               <Feather name="check-circle" size={14} color={Colors.success} />
-              <Text style={styles.requirementText}>At least 6 characters</Text>
+              <Text style={styles.requirementText}>{ui.reqLength}</Text>
             </View>
             <View style={styles.requirementItem}>
               <Feather name="check-circle" size={14} color={Colors.success} />
-              <Text style={styles.requirementText}>Mix of letters and numbers</Text>
+              <Text style={styles.requirementText}>{ui.reqMix}</Text>
             </View>
             <View style={styles.requirementItem}>
               <Feather name="check-circle" size={14} color={Colors.success} />
               <Text style={styles.requirementText}>
-                Different from your current password
+                {ui.reqDifferent}
               </Text>
             </View>
           </View>
@@ -223,7 +243,7 @@ export default function ChangePasswordScreen() {
           disabled={isLoading}
         >
           <Text style={styles.submitBtnText}>
-            {isLoading ? "Changing..." : "Change Password"}
+            {isLoading ? ui.changing : ui.changePassword}
           </Text>
         </Pressable>
       </View>

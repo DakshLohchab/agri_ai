@@ -3,6 +3,9 @@ import { Animated, StyleSheet, Text, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { Colors } from "@/constants/colors";
 import { AgentStep } from "@/context/ChatContext";
+import { useLanguage } from "@/context/LanguageContext";
+import { useLocalizedStrings } from "@/hooks/useLocalizedStrings";
+import { translateText } from "@/services/translation";
 
 type Props = {
   step: AgentStep;
@@ -30,6 +33,20 @@ const NODE_ICONS: Record<string, string> = {
 export function AgentNode({ step, index }: Props) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const { language } = useLanguage();
+  const ui = useLocalizedStrings({
+    Guardrails: "Guardrails",
+    Intent: "Intent",
+    WebSearch: "Web Search",
+    Weather: "Weather",
+    Market: "Market",
+    Synthesis: "Synthesis",
+    completed: "completed",
+    error: "error",
+    running: "running",
+    pending: "pending",
+  });
+  const [localizedMessage, setLocalizedMessage] = React.useState(step.message);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -61,8 +78,42 @@ export function AgentNode({ step, index }: Props) {
     }
   }, [step.status]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (language.code === "en") {
+      setLocalizedMessage(step.message);
+      return;
+    }
+
+    translateText(step.message, language.code, "en")
+      .then((translated) => {
+        if (!cancelled) setLocalizedMessage(translated || step.message);
+      })
+      .catch(() => {
+        if (!cancelled) setLocalizedMessage(step.message);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [language.code, step.message]);
+
   const color = NODE_COLORS[step.node] || Colors.primary;
   const icon = (NODE_ICONS[step.node] || "circle") as keyof typeof Feather.glyphMap;
+  const nodeLabelMap: Record<string, string> = {
+    Guardrails: ui.Guardrails,
+    Intent: ui.Intent,
+    "Web Search": ui.WebSearch,
+    Weather: ui.Weather,
+    Market: ui.Market,
+    Synthesis: ui.Synthesis,
+  };
+  const statusLabelMap: Record<AgentStep["status"], string> = {
+    completed: ui.completed,
+    error: ui.error,
+    running: ui.running,
+    pending: ui.pending,
+  };
 
   return (
     <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
@@ -90,7 +141,7 @@ export function AgentNode({ step, index }: Props) {
       <View style={styles.content}>
         <View style={styles.header}>
           <Text style={[styles.nodeName, { color: step.status === "pending" ? Colors.textMuted : color }]}>
-            {step.node}
+            {nodeLabelMap[step.node] ?? step.node}
           </Text>
           {step.duration !== undefined && (
             <Text style={styles.duration}>{step.duration}ms</Text>
@@ -125,12 +176,12 @@ export function AgentNode({ step, index }: Props) {
                 },
               ]}
             >
-              {step.status}
+              {statusLabelMap[step.status]}
             </Text>
           </View>
         </View>
         <Text style={styles.message} numberOfLines={2}>
-          {step.message}
+          {localizedMessage}
         </Text>
       </View>
     </Animated.View>

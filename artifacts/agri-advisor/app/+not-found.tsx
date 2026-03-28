@@ -1,15 +1,22 @@
 import { Link, Stack } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
+import { useLocalizedStrings } from "@/hooks/useLocalizedStrings";
 
 export default function NotFoundScreen() {
+  const ui = useLocalizedStrings({
+    title: "Oops!",
+    message: "This screen doesn't exist.",
+    cta: "Go to home screen!",
+  });
+
   return (
     <>
-      <Stack.Screen options={{ title: "Oops!" }} />
+      <Stack.Screen options={{ title: ui.title }} />
       <View style={styles.container}>
-        <Text style={styles.title}>This screen doesn&apos;t exist.</Text>
+        <Text style={styles.title}>{ui.message}</Text>
 
         <Link href="/" style={styles.link}>
-          <Text style={styles.linkText}>Go to home screen!</Text>
+          <Text style={styles.linkText}>{ui.cta}</Text>
         </Link>
       </View>
     </>

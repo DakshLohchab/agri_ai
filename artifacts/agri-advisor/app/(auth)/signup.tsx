@@ -15,8 +15,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "@/constants/colors";
 import { useAuth } from "@/context/AuthContext";
 import * as Haptics from "expo-haptics";
-
-const LANGUAGES = ["English", "Hindi", "Marathi", "Punjabi", "Gujarati", "Telugu", "Tamil"];
+import { LANGUAGES } from "@/constants/languages";
+import { useLocalizedStrings } from "@/hooks/useLocalizedStrings";
 
 export default function SignupScreen() {
   const insets = useSafeAreaInsets();
@@ -26,11 +26,43 @@ export default function SignupScreen() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [name, setName] = useState("");
-  const [selectedLang, setSelectedLang] = useState("English");
+  const [selectedLangCode, setSelectedLangCode] = useState("en");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const ui = useLocalizedStrings({
+    fillAllFields: "Please fill in all fields",
+    invalidEmail: "Please enter a valid email",
+    passwordMin: "Password must be at least 6 characters",
+    passwordsMismatch: "Passwords don't match",
+    enterName: "Please enter your name",
+    signupFailed: "Sign up failed. Please try again.",
+    stepLabel: "Step",
+    ofLabel: "of",
+    createAccount: "Create Account",
+    signUpEmail: "Sign up with your email",
+    emailAddress: "Email Address",
+    emailPlaceholder: "you@example.com",
+    password: "Password",
+    confirmPassword: "Confirm Password",
+    yourProfile: "Your Profile",
+    tellUsMore: "Tell us more about yourself",
+    fullName: "Full Name",
+    fullNamePlaceholder: "e.g. Rajesh Kumar",
+    preferredLanguage: "Preferred Language",
+    allSet: "All Set!",
+    ready: "Your account is ready. Let's get started!",
+    email: "Email",
+    name: "Name",
+    language: "Language",
+    almostThere: "Almost There",
+    next: "Next",
+    creatingAccount: "Creating Account...",
+    alreadyHaveAccount: "Already have an account?",
+    signIn: "Sign In",
+  });
+  const selectedLanguage = LANGUAGES.find((lang) => lang.code === selectedLangCode) ?? LANGUAGES[0];
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const botPad = Platform.OS === "web" ? 34 : insets.bottom;
@@ -39,24 +71,24 @@ export default function SignupScreen() {
     if (step === 1) {
       // Validate email and password
       if (!email.trim() || !password.trim() || !confirmPassword.trim()) {
-        setError("Please fill in all fields");
+        setError(ui.fillAllFields);
         return;
       }
       if (!email.includes("@")) {
-        setError("Please enter a valid email");
+        setError(ui.invalidEmail);
         return;
       }
       if (password.length < 6) {
-        setError("Password must be at least 6 characters");
+        setError(ui.passwordMin);
         return;
       }
       if (password !== confirmPassword) {
-        setError("Passwords don't match");
+        setError(ui.passwordsMismatch);
         return;
       }
     }
     if (step === 2 && !name.trim()) {
-      setError("Please enter your name");
+      setError(ui.enterName);
       return;
     }
     setError("");
@@ -72,7 +104,7 @@ export default function SignupScreen() {
       await signup(email.trim().toLowerCase(), password, name.trim());
       router.replace("/(tabs)");
     } catch (e: any) {
-      setError(e.message || "Sign up failed. Please try again.");
+      setError(e.message || ui.signupFailed);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setIsLoading(false);
@@ -97,7 +129,7 @@ export default function SignupScreen() {
             />
           ))}
         </View>
-        <Text style={styles.stepLabel}>Step {step} of 3</Text>
+        <Text style={styles.stepLabel}>{ui.stepLabel} {step} {ui.ofLabel} 3</Text>
       </View>
 
       <KeyboardAvoidingView
@@ -113,14 +145,14 @@ export default function SignupScreen() {
         >
           {step === 1 && (
             <View style={styles.stepContent}>
-              <Text style={styles.stepTitle}>Create Account</Text>
-              <Text style={styles.stepDesc}>Sign up with your email</Text>
+              <Text style={styles.stepTitle}>{ui.createAccount}</Text>
+              <Text style={styles.stepDesc}>{ui.signUpEmail}</Text>
               <View style={styles.fields}>
                 <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>Email Address</Text>
+                  <Text style={styles.fieldLabel}>{ui.emailAddress}</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="you@example.com"
+                    placeholder={ui.emailPlaceholder}
                     placeholderTextColor={Colors.textMuted}
                     value={email}
                     onChangeText={(t) => { setEmail(t); setError(""); }}
@@ -130,7 +162,7 @@ export default function SignupScreen() {
                   />
                 </View>
                 <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>Password</Text>
+                  <Text style={styles.fieldLabel}>{ui.password}</Text>
                   <View style={styles.passwordContainer}>
                     <TextInput
                       style={[styles.input, { flex: 1, paddingRight: 0 }]}
@@ -154,7 +186,7 @@ export default function SignupScreen() {
                   </View>
                 </View>
                 <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>Confirm Password</Text>
+                  <Text style={styles.fieldLabel}>{ui.confirmPassword}</Text>
                   <View style={styles.passwordContainer}>
                     <TextInput
                       style={[styles.input, { flex: 1, paddingRight: 0 }]}
@@ -183,14 +215,14 @@ export default function SignupScreen() {
 
           {step === 2 && (
             <View style={styles.stepContent}>
-              <Text style={styles.stepTitle}>Your Profile</Text>
-              <Text style={styles.stepDesc}>Tell us more about yourself</Text>
+              <Text style={styles.stepTitle}>{ui.yourProfile}</Text>
+              <Text style={styles.stepDesc}>{ui.tellUsMore}</Text>
               <View style={styles.fields}>
                 <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>Full Name</Text>
+                  <Text style={styles.fieldLabel}>{ui.fullName}</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="e.g. Rajesh Kumar"
+                    placeholder={ui.fullNamePlaceholder}
                     placeholderTextColor={Colors.textMuted}
                     value={name}
                     onChangeText={(t) => { setName(t); setError(""); }}
@@ -199,26 +231,26 @@ export default function SignupScreen() {
                   />
                 </View>
                 <View style={styles.fieldGroup}>
-                  <Text style={styles.fieldLabel}>Preferred Language</Text>
+                  <Text style={styles.fieldLabel}>{ui.preferredLanguage}</Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                     <View style={styles.chipRow}>
                       {LANGUAGES.map((lang) => (
                         <Pressable
-                          key={lang}
+                          key={lang.code}
                           style={[
                             styles.chip,
-                            selectedLang === lang && styles.chipSelected,
+                            selectedLangCode === lang.code && styles.chipSelected,
                           ]}
-                          onPress={() => { setSelectedLang(lang); Haptics.selectionAsync(); }}
+                          onPress={() => { setSelectedLangCode(lang.code); Haptics.selectionAsync(); }}
                           disabled={isLoading}
                         >
                           <Text
                             style={[
                               styles.chipText,
-                              selectedLang === lang && styles.chipTextSelected,
+                              selectedLangCode === lang.code && styles.chipTextSelected,
                             ]}
                           >
-                            {lang}
+                            {lang.nativeName}
                           </Text>
                         </Pressable>
                       ))}
@@ -231,28 +263,28 @@ export default function SignupScreen() {
 
           {step === 3 && (
             <View style={styles.stepContent}>
-              <Text style={styles.stepTitle}>All Set!</Text>
-              <Text style={styles.stepDesc}>Your account is ready. Let's get started!</Text>
+              <Text style={styles.stepTitle}>{ui.allSet}</Text>
+              <Text style={styles.stepDesc}>{ui.ready}</Text>
               <View style={styles.summaryBox}>
                 <View style={styles.summaryItem}>
                   <Feather name="mail" size={20} color={Colors.primary} />
                   <View style={{ flex: 1, marginLeft: 12 }}>
-                    <Text style={styles.summaryLabel}>Email</Text>
+                    <Text style={styles.summaryLabel}>{ui.email}</Text>
                     <Text style={styles.summaryValue}>{email}</Text>
                   </View>
                 </View>
                 <View style={styles.summaryItem}>
                   <Feather name="user" size={20} color={Colors.primary} />
                   <View style={{ flex: 1, marginLeft: 12 }}>
-                    <Text style={styles.summaryLabel}>Name</Text>
+                    <Text style={styles.summaryLabel}>{ui.name}</Text>
                     <Text style={styles.summaryValue}>{name}</Text>
                   </View>
                 </View>
                 <View style={styles.summaryItem}>
                   <Feather name="globe" size={20} color={Colors.primary} />
                   <View style={{ flex: 1, marginLeft: 12 }}>
-                    <Text style={styles.summaryLabel}>Language</Text>
-                    <Text style={styles.summaryValue}>{selectedLang}</Text>
+                    <Text style={styles.summaryLabel}>{ui.language}</Text>
+                    <Text style={styles.summaryValue}>{selectedLanguage.nativeName}</Text>
                   </View>
                 </View>
               </View>
@@ -276,7 +308,7 @@ export default function SignupScreen() {
             disabled={isLoading}
           >
             <Text style={styles.nextBtnText}>
-              {step === 2 ? "Almost There" : "Next"}
+              {step === 2 ? ui.almostThere : ui.next}
             </Text>
             <Feather name="arrow-right" size={18} color={Colors.white} />
           </Pressable>
@@ -287,7 +319,7 @@ export default function SignupScreen() {
             disabled={isLoading}
           >
             <Text style={styles.nextBtnText}>
-              {isLoading ? "Creating Account..." : "Create Account"}
+              {isLoading ? ui.creatingAccount : ui.createAccount}
             </Text>
             <Feather name="arrow-right" size={18} color={Colors.white} />
           </Pressable>
@@ -299,8 +331,8 @@ export default function SignupScreen() {
           disabled={isLoading}
         >
           <Text style={styles.signinLinkText}>
-            Already have an account?{" "}
-            <Text style={styles.signinLinkHighlight}>Sign In</Text>
+            {ui.alreadyHaveAccount}{" "}
+            <Text style={styles.signinLinkHighlight}>{ui.signIn}</Text>
           </Text>
         </Pressable>
       </View>

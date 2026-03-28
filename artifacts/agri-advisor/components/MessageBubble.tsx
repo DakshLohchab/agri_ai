@@ -5,6 +5,13 @@ import { Colors } from "@/constants/colors";
 import { AgentNode } from "@/components/AgentNode";
 import { FormattedAIContent } from "@/components/FormattedAIContent";
 import { AgentStep, Message } from "@/context/ChatContext";
+import { useLanguage } from "@/context/LanguageContext";
+import { useLocalizedStrings } from "@/hooks/useLocalizedStrings";
+import {
+  isSpeechPlaybackAvailable,
+  speakText,
+  stopSpeaking,
+} from "@/services/voiceService";
 
 type Props = {
   message: Message;
@@ -13,9 +20,19 @@ type Props = {
 export function MessageBubble({ message }: Props) {
   const isUser = message.role === "user";
   const [showSteps, setShowSteps] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speechError, setSpeechError] = useState("");
+  const { language } = useLanguage();
+  const ui = useLocalizedStrings({
+    listen: "Listen",
+    stop: "Stop",
+    agents: "agents",
+    agriAdvisor: "AgriAdvisor",
+  });
   const hasSteps = !!(message.agentSteps && message.agentSteps.length > 0);
   const completedSteps = message.agentSteps?.filter((s) => s.status === "completed").length ?? 0;
   const totalSteps = message.agentSteps?.length ?? 0;
+  const canSpeak = !isUser && !!message.content.trim() && isSpeechPlaybackAvailable();
 
   const formatTime = (ts: number) => {
     const d = new Date(ts);
@@ -32,6 +49,27 @@ export function MessageBubble({ message }: Props) {
       </View>
     );
   }
+
+  const handleSpeakPress = async () => {
+    if (!canSpeak) return;
+
+    try {
+      if (isSpeaking) {
+        await stopSpeaking();
+        setIsSpeaking(false);
+        setSpeechError("");
+        return;
+      }
+
+      setSpeechError("");
+      setIsSpeaking(true);
+      await speakText(message.content, language.code);
+    } catch (error: any) {
+      setSpeechError(error?.message || "Speech playback failed on this device.");
+    } finally {
+      setIsSpeaking(false);
+    }
+  };
 
   return (
     <View style={styles.assistantContainer}>
@@ -60,7 +98,7 @@ export function MessageBubble({ message }: Props) {
                 ))}
               </View>
               <Text style={styles.stepsLabel}>
-                {completedSteps}/{totalSteps} agents
+                {completedSteps}/{totalSteps} {ui.agents}
               </Text>
               <Feather
                 name={showSteps ? "chevron-up" : "chevron-down"}
@@ -78,7 +116,23 @@ export function MessageBubble({ message }: Props) {
           </View>
         )}
         <View style={styles.assistantBubble}>
+          <View style={styles.assistantBubbleHeader}>
+            <Text style={styles.assistantLabel}>{ui.agriAdvisor}</Text>
+            {canSpeak ? (
+              <Pressable style={styles.speakButton} onPress={handleSpeakPress}>
+                <Feather
+                  name={isSpeaking ? "square" : "volume-2"}
+                  size={14}
+                  color={isSpeaking ? Colors.primaryLight : Colors.textSecondary}
+                />
+                <Text style={[styles.speakButtonText, isSpeaking && styles.speakButtonTextActive]}>
+                  {isSpeaking ? ui.stop : ui.listen}
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
           <FormattedAIContent content={message.content} variant="bubble" />
+          {speechError ? <Text style={styles.speechError}>{speechError}</Text> : null}
           <Text style={styles.assistantTime}>{formatTime(message.timestamp)}</Text>
         </View>
       </View>
@@ -174,6 +228,46 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     maxWidth: "92%",
+  },
+  assistantBubbleHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 8,
+  },
+  assistantLabel: {
+    color: Colors.textSecondary,
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  speakButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: Colors.surfaceElevated,
+    borderWidth: 1,
+    borderColor: Colors.surfaceBorder,
+  },
+  speakButtonText: {
+    color: Colors.textSecondary,
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+  },
+  speakButtonTextActive: {
+    color: Colors.primaryLight,
+  },
+  speechError: {
+    color: Colors.error,
+    fontSize: 11,
+    lineHeight: 16,
+    fontFamily: "Inter_500Medium",
+    marginTop: 8,
   },
   assistantTime: {
     color: Colors.textMuted,

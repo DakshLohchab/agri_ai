@@ -14,21 +14,35 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "@/constants/colors";
+import { useLocalizedStrings } from "@/hooks/useLocalizedStrings";
 
 const { width, height } = Dimensions.get("window");
 
 const FEATURES = [
-  { icon: "cpu", label: "6-Agent AI Pipeline" },
-  { icon: "cloud", label: "Live Weather Data" },
-  { icon: "trending-up", label: "Mandi Prices" },
-  { icon: "shield", label: "Guardrails & Safety" },
-];
+  { icon: "cpu", key: "featurePipeline" },
+  { icon: "cloud", key: "featureWeather" },
+  { icon: "trending-up", key: "featureMandi" },
+  { icon: "shield", key: "featureGuardrails" },
+] as const;
 
 export default function WelcomeScreen() {
   const insets = useSafeAreaInsets();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
   const scaleAnim = useRef(new Animated.Value(0.9)).current;
+  const ui = useLocalizedStrings({
+    appName: "AgriAdvisor",
+    tagline: "AI-Powered Farming Intelligence",
+    subtitle:
+      "LangGraph multi-agent system with real-time web search, weather, and market data",
+    featurePipeline: "6-Agent AI Pipeline",
+    featureWeather: "Live Weather Data",
+    featureMandi: "Mandi Prices",
+    featureGuardrails: "Guardrails & Safety",
+    getStarted: "Get Started",
+    signIn: "Sign In",
+    disclaimer: "Domain-specialized AI with compliance guardrails",
+  });
 
   useEffect(() => {
     Animated.parallel([
@@ -64,10 +78,10 @@ export default function WelcomeScreen() {
               <Feather name="feather" size={18} color={Colors.secondary} />
             </View>
           </View>
-          <Text style={styles.appName}>AgriAdvisor</Text>
-          <Text style={styles.tagline}>AI-Powered Farming Intelligence</Text>
+          <Text style={styles.appName}>{ui.appName}</Text>
+          <Text style={styles.tagline}>{ui.tagline}</Text>
           <Text style={styles.subtitle}>
-            LangGraph multi-agent system with real-time web search, weather, and market data
+            {ui.subtitle}
           </Text>
         </Animated.View>
 
@@ -80,7 +94,7 @@ export default function WelcomeScreen() {
           {FEATURES.map((f, i) => (
             <View key={i} style={styles.featureChip}>
               <Feather name={f.icon as any} size={14} color={Colors.primary} />
-              <Text style={styles.featureText}>{f.label}</Text>
+              <Text style={styles.featureText}>{ui[f.key]}</Text>
             </View>
           ))}
         </Animated.View>
@@ -95,19 +109,19 @@ export default function WelcomeScreen() {
             style={({ pressed }) => [styles.primaryBtn, { opacity: pressed ? 0.85 : 1 }]}
             onPress={() => router.push("/(auth)/signup")}
           >
-            <Text style={styles.primaryBtnText}>Get Started</Text>
+            <Text style={styles.primaryBtnText}>{ui.getStarted}</Text>
             <Feather name="arrow-right" size={18} color={Colors.white} />
           </Pressable>
           <Pressable
             style={({ pressed }) => [styles.secondaryBtn, { opacity: pressed ? 0.75 : 1 }]}
             onPress={() => router.push("/(auth)/signin")}
           >
-            <Text style={styles.secondaryBtnText}>Sign In</Text>
+            <Text style={styles.secondaryBtnText}>{ui.signIn}</Text>
           </Pressable>
         </Animated.View>
 
         <Animated.Text style={[styles.disclaimer, { opacity: fadeAnim }]}>
-          Domain-specialized AI with compliance guardrails
+          {ui.disclaimer}
         </Animated.Text>
       </View>
     </View>

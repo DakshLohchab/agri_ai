@@ -11,18 +11,20 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { AppBackdrop } from "@/components/AppBackdrop";
 
 import { Colors } from "@/constants/colors";
 import { LANGUAGES } from "@/constants/languages";
 import { useAuth } from "@/context/AuthContext";
 import { useChat } from "@/context/ChatContext";
 import { useLanguage } from "@/context/LanguageContext";
+import { useLocalizedStrings } from "@/hooks/useLocalizedStrings";
 
 const LOCATION_SUGGESTIONS = ["Punjab", "Haryana", "Delhi", "Maharashtra", "Karnataka", "Tamil Nadu"];
-const LANGUAGE_CODES = ["en", "hi", "mr", "te", "pa", "bn"];
 
 function getInitials(name?: string, email?: string) {
   const source = (name || email || "Farmer").trim();
@@ -45,6 +47,21 @@ export default function ProfileScreen() {
   const { user, logout, updateProfile } = useAuth();
   const { language, setLanguage } = useLanguage();
   const { conversations } = useChat();
+  const ui = useLocalizedStrings({
+    profile: "Profile",
+    chats: "Chats",
+    messages: "Messages",
+    languageDelivery: "Language & delivery",
+    personalDetails: "Personal details",
+    accountResilience: "Account & resilience",
+    saveChanges: "Save Changes",
+    noChangesYet: "No Changes Yet",
+    signingOut: "Sign Out",
+    profileStrength: "Profile strength",
+  });
+  const { width } = useWindowDimensions();
+  const isWide = width >= 960;
+  const isDesktop = width >= 1200;
 
   const [name, setName] = useState(user?.name || "");
   const [email, setEmail] = useState(user?.email || "");
@@ -74,11 +91,6 @@ export default function ProfileScreen() {
     (latest, item) => (!latest || item.updatedAt > latest ? item.updatedAt : latest),
     undefined
   );
-  const languageChoices = useMemo(
-    () => LANGUAGE_CODES.map((code) => LANGUAGES.find((item) => item.code === code)).filter(Boolean),
-    []
-  );
-
   const syncLabel =
     lastSaveMode === "remote"
       ? "Cloud sync healthy"
@@ -176,11 +188,15 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "right", "bottom", "left"]}>
+      <AppBackdrop variant="warm" />
       <View style={styles.header}>
         <Pressable style={styles.iconButton} onPress={() => router.back()}>
           <Feather name="arrow-left" size={20} color={Colors.text} />
         </Pressable>
-        <Text style={styles.headerTitle}>Profile</Text>
+        <View style={styles.headerCopy}>
+          <Text style={styles.headerEyebrow}>Account studio</Text>
+          <Text style={styles.headerTitle}>{ui.profile}</Text>
+        </View>
         <View style={styles.badge}>
           <Text style={styles.badgeText}>{completionPercent}% complete</Text>
         </View>
@@ -188,6 +204,8 @@ export default function ProfileScreen() {
 
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <View style={[styles.profileShell, isDesktop && styles.profileShellDesktop]}>
+          <View style={[styles.mainColumn, isDesktop && styles.mainColumnDesktop]}>
           <View style={styles.heroCard}>
             <View style={styles.heroRow}>
               <View style={styles.avatarWrap}>
@@ -211,7 +229,7 @@ export default function ProfileScreen() {
             </View>
 
             <View style={styles.progressMeta}>
-              <Text style={styles.sectionTitle}>Profile strength</Text>
+              <Text style={styles.sectionTitle}>{ui.profileStrength}</Text>
               <Text style={styles.sectionHint}>{completionCount}/3 core fields</Text>
             </View>
             <View style={styles.progressTrack}>
@@ -222,15 +240,15 @@ export default function ProfileScreen() {
             </Text>
           </View>
 
-          <View style={styles.statsRow}>
+          <View style={[styles.statsRow, isWide && styles.statsRowWide]}>
             <View style={styles.statCard}>
               <Text style={styles.statValue}>{conversations.length}</Text>
-              <Text style={styles.statLabel}>Chats</Text>
+              <Text style={styles.statLabel}>{ui.chats}</Text>
               <Text style={styles.statHint}>{formatLastActive(lastActiveAt)}</Text>
             </View>
             <View style={styles.statCard}>
               <Text style={styles.statValue}>{totalMessages}</Text>
-              <Text style={styles.statLabel}>Messages</Text>
+              <Text style={styles.statLabel}>{ui.messages}</Text>
               <Text style={styles.statHint}>Saved on device</Text>
             </View>
           </View>
@@ -268,7 +286,7 @@ export default function ProfileScreen() {
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Personal details</Text>
+            <Text style={styles.sectionTitle}>{ui.personalDetails}</Text>
             <Text style={styles.sectionHint}>Keep this updated so the app can tailor advice better.</Text>
 
             <Text style={styles.label}>Full Name</Text>
@@ -336,12 +354,14 @@ export default function ProfileScreen() {
             </View>
           </View>
 
+          </View>
+
+          <View style={[styles.sideColumn, isDesktop && styles.sideColumnDesktop]}>
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Language & delivery</Text>
+            <Text style={styles.sectionTitle}>{ui.languageDelivery}</Text>
             <Text style={styles.sectionHint}>Choose the app language you prefer. You can still chat in mixed or local language.</Text>
-            <View style={styles.languageGrid}>
-              {languageChoices.map((item) => {
-                if (!item) return null;
+            <View style={[styles.languageGrid, isWide && styles.languageGridWide]}>
+              {LANGUAGES.map((item) => {
                 const active = item.code === language.code;
                 return (
                   <Pressable
@@ -373,7 +393,7 @@ export default function ProfileScreen() {
           ) : null}
 
           <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Account & resilience</Text>
+            <Text style={styles.sectionTitle}>{ui.accountResilience}</Text>
             <Text style={styles.sectionHint}>Your profile keeps helping the app even when connectivity is weak.</Text>
 
             <Pressable style={styles.actionRow} onPress={() => router.push("/change-password")} disabled={isLoading || isLocating || isChangingLanguage}>
@@ -403,13 +423,15 @@ export default function ProfileScreen() {
           <View style={styles.actions}>
             <Pressable style={[styles.primaryButton, !canSave && styles.buttonMuted]} onPress={handleSave} disabled={!canSave}>
               <Feather name={isLoading ? "loader" : "save"} size={18} color={Colors.white} />
-              <Text style={styles.primaryButtonText}>{isLoading ? "Saving..." : hasChanges ? "Save Changes" : "No Changes Yet"}</Text>
+              <Text style={styles.primaryButtonText}>{isLoading ? "Saving..." : hasChanges ? ui.saveChanges : ui.noChangesYet}</Text>
             </Pressable>
 
             <Pressable style={styles.secondaryButton} onPress={handleLogout} disabled={isLoading || isLocating || isChangingLanguage}>
               <Feather name="log-out" size={18} color={Colors.error} />
-              <Text style={styles.secondaryButtonText}>Sign Out</Text>
+              <Text style={styles.secondaryButtonText}>{ui.signingOut}</Text>
             </Pressable>
+          </View>
+          </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -429,6 +451,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.surfaceBorder,
   },
+  headerCopy: { flex: 1, marginLeft: 12, gap: 2 },
+  headerEyebrow: {
+    fontSize: 10,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.secondary,
+    textTransform: "uppercase",
+    letterSpacing: 1.1,
+  },
   iconButton: {
     width: 42,
     height: 42,
@@ -440,10 +470,43 @@ const styles = StyleSheet.create({
     borderColor: Colors.surfaceBorder,
   },
   headerTitle: { fontSize: 19, fontFamily: "Inter_700Bold", color: Colors.text },
-  badge: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: Colors.primary + "18" },
+  badge: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: Colors.primary + "18",
+    borderWidth: 1,
+    borderColor: Colors.primary + "2E",
+  },
   badgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: Colors.primaryLight },
   content: { padding: 20, paddingBottom: 36, gap: 14 },
-  heroCard: { backgroundColor: Colors.surface, borderRadius: 24, borderWidth: 1, borderColor: Colors.surfaceBorder, padding: 18, gap: 14 },
+  profileShell: { gap: 14 },
+  profileShellDesktop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    width: "100%",
+    maxWidth: 1240,
+    alignSelf: "center",
+    gap: 18,
+  },
+  mainColumn: { gap: 14 },
+  mainColumnDesktop: { flex: 1.1 },
+  sideColumn: { gap: 14 },
+  sideColumnDesktop: {
+    flex: 0.9,
+  },
+  heroCard: {
+    backgroundColor: Colors.surface + "F3",
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: Colors.surfaceBorder,
+    padding: 20,
+    gap: 14,
+    shadowColor: Colors.black,
+    shadowOpacity: 0.18,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 12 },
+  },
   heroRow: { flexDirection: "row", gap: 16, alignItems: "center" },
   avatarWrap: {
     width: 78,
@@ -477,11 +540,31 @@ const styles = StyleSheet.create({
   progressTrack: { height: 10, borderRadius: 999, overflow: "hidden", backgroundColor: Colors.surfaceElevated },
   progressFill: { height: "100%", backgroundColor: Colors.primary, borderRadius: 999 },
   statsRow: { flexDirection: "row", gap: 12 },
-  statCard: { flex: 1, backgroundColor: Colors.surface, borderRadius: 20, borderWidth: 1, borderColor: Colors.surfaceBorder, padding: 16, gap: 6 },
+  statsRowWide: { gap: 14 },
+  statCard: {
+    flex: 1,
+    backgroundColor: Colors.surface + "F2",
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: Colors.surfaceBorder,
+    padding: 16,
+    gap: 6,
+  },
   statValue: { color: Colors.text, fontSize: 24, fontFamily: "Inter_700Bold" },
   statLabel: { color: Colors.text, fontSize: 13, fontFamily: "Inter_600SemiBold" },
   statHint: { color: Colors.textSecondary, fontSize: 12, lineHeight: 18, fontFamily: "Inter_400Regular" },
-  card: { backgroundColor: Colors.surface, borderRadius: 24, borderWidth: 1, borderColor: Colors.surfaceBorder, padding: 18, gap: 12 },
+  card: {
+    backgroundColor: Colors.surface + "F2",
+    borderRadius: 26,
+    borderWidth: 1,
+    borderColor: Colors.surfaceBorder,
+    padding: 18,
+    gap: 12,
+    shadowColor: Colors.black,
+    shadowOpacity: 0.1,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+  },
   sectionTitle: { color: Colors.text, fontSize: 16, fontFamily: "Inter_700Bold" },
   sectionHint: { color: Colors.textSecondary, fontSize: 12, lineHeight: 18, fontFamily: "Inter_400Regular" },
   label: { color: Colors.text, fontSize: 13, fontFamily: "Inter_600SemiBold", marginTop: 4 },
@@ -509,6 +592,7 @@ const styles = StyleSheet.create({
   choiceText: { color: Colors.textSecondary, fontSize: 12, fontFamily: "Inter_500Medium" },
   choiceTextActive: { color: Colors.primaryLight },
   languageGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  languageGridWide: { gap: 12 },
   languageChip: { width: "31%", paddingHorizontal: 12, paddingVertical: 12, borderRadius: 16, borderWidth: 1, borderColor: Colors.surfaceBorder, backgroundColor: Colors.surfaceElevated, gap: 4 },
   languageChipActive: { backgroundColor: Colors.primary + "18", borderColor: Colors.primary + "44" },
   languageName: { color: Colors.text, fontSize: 13, fontFamily: "Inter_600SemiBold" },

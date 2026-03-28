@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Colors } from "@/constants/colors";
 import { useAuth } from "@/context/AuthContext";
+import { useLocalizedStrings } from "@/hooks/useLocalizedStrings";
 
 export default function SigninScreen() {
   const insets = useSafeAreaInsets();
@@ -24,18 +25,32 @@ export default function SigninScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const ui = useLocalizedStrings({
+    fillAllFields: "Please fill in all fields",
+    invalidEmail: "Please enter a valid email",
+    signinFailed: "Sign in failed. Please try again.",
+    title: "Welcome Back",
+    subtitle: "Sign in to continue farming smarter",
+    email: "Email",
+    emailPlaceholder: "you@example.com",
+    password: "Password",
+    signingIn: "Signing In...",
+    signIn: "Sign In",
+    noAccountPrefix: "Don't have an account?",
+    createAccount: "Create Account",
+  });
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const botPad = Platform.OS === "web" ? 34 : insets.bottom;
 
   const handleSignIn = async () => {
     if (!email.trim() || !password.trim()) {
-      setError("Please fill in all fields");
+      setError(ui.fillAllFields);
       return;
     }
 
     if (!email.includes("@")) {
-      setError("Please enter a valid email");
+      setError(ui.invalidEmail);
       return;
     }
 
@@ -46,7 +61,7 @@ export default function SigninScreen() {
       await login(email.trim().toLowerCase(), password);
       router.replace("/(tabs)");
     } catch (e: any) {
-      setError(e.message || "Sign in failed. Please try again.");
+      setError(e.message || ui.signinFailed);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setIsLoading(false);
@@ -69,15 +84,15 @@ export default function SigninScreen() {
           contentContainerStyle={[styles.content, { paddingBottom: botPad + 24 }]}
           keyboardShouldPersistTaps="handled"
         >
-          <Text style={styles.title}>Welcome Back</Text>
-          <Text style={styles.subtitle}>Sign in to continue farming smarter</Text>
+          <Text style={styles.title}>{ui.title}</Text>
+          <Text style={styles.subtitle}>{ui.subtitle}</Text>
 
           <View style={styles.fields}>
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Email</Text>
+              <Text style={styles.label}>{ui.email}</Text>
               <TextInput
                 style={styles.input}
-                placeholder="you@example.com"
+                placeholder={ui.emailPlaceholder}
                 placeholderTextColor={Colors.textMuted}
                 value={email}
                 onChangeText={(t) => { setEmail(t); setError(""); }}
@@ -87,7 +102,7 @@ export default function SigninScreen() {
               />
             </View>
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Password</Text>
+              <Text style={styles.label}>{ui.password}</Text>
               <View style={styles.passwordContainer}>
                 <TextInput
                   style={[styles.input, { flex: 1 }]}
@@ -124,7 +139,7 @@ export default function SigninScreen() {
             onPress={handleSignIn}
             disabled={isLoading}
           >
-            <Text style={styles.signinBtnText}>{isLoading ? "Signing In..." : "Sign In"}</Text>
+            <Text style={styles.signinBtnText}>{isLoading ? ui.signingIn : ui.signIn}</Text>
             <Feather name="arrow-right" size={18} color={Colors.white} />
           </Pressable>
 
@@ -134,8 +149,8 @@ export default function SigninScreen() {
             disabled={isLoading}
           >
             <Text style={styles.switchText}>
-              Don't have an account?{" "}
-              <Text style={styles.switchLink}>Create Account</Text>
+              {ui.noAccountPrefix}{" "}
+              <Text style={styles.switchLink}>{ui.createAccount}</Text>
             </Text>
           </Pressable>
         </ScrollView>

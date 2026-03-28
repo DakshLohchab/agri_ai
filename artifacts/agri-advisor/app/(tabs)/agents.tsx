@@ -1,12 +1,14 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import React, { useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { AgentNode } from "@/components/AgentNode";
 import { FormattedAIContent } from "@/components/FormattedAIContent";
 import { Colors } from "@/constants/colors";
 import { AgentStep } from "@/context/ChatContext";
+import { useLocalizedStrings } from "@/hooks/useLocalizedStrings";
+import { useTabBarSpacing } from "@/hooks/useTabBarSpacing";
 import {
   DemoScenarioKey,
   getDemoScenarios,
@@ -150,6 +152,20 @@ const SCENARIO_META: Record<
 };
 
 export default function AgentsScreen() {
+  const ui = useLocalizedStrings({
+    aiAgents: "AI Agents",
+    liveDemo: "Live Demo",
+    pipeline: "Pipeline",
+    nodeArchitecture: "Node Architecture",
+    runStandardQuery: "Run Standard Query",
+    detailedDemoScenarios: "Detailed Demo Scenarios",
+    pipelineExecution: "Pipeline Execution",
+    formattedDemoOutput: "Formatted Demo Output",
+  });
+  const { width } = useWindowDimensions();
+  const isWeb = Platform.OS === "web";
+  const isDesktop = width >= 1180;
+  const tabBarSpacing = useTabBarSpacing();
   const [view, setView] = useState<"pipeline" | "demo">("pipeline");
   const [activeSteps, setActiveSteps] = useState<AgentStep[]>([]);
   const [isRunning, setIsRunning] = useState(false);
@@ -218,20 +234,28 @@ export default function AgentsScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={["left", "right", "top"]}>
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={[
+          styles.content,
+          isDesktop && styles.contentDesktop,
+          { paddingBottom: isWeb ? 40 : tabBarSpacing },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.heroCard}>
           <View style={styles.heroTop}>
             <View style={styles.heroIcon}>
               <Feather name="cpu" size={26} color={Colors.synthesis} />
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.pageTitle}>AI Agents</Text>
+              <Text style={styles.pageTitle}>{ui.aiAgents}</Text>
               <Text style={styles.pageSubtitle}>
                 Safety, resilience, and readable AI output built into one explainable pipeline.
               </Text>
             </View>
           </View>
-          <View style={styles.capabilityStrip}>
+          <View style={[styles.capabilityStrip, isDesktop && styles.capabilityStripDesktop]}>
             {CAPABILITIES.map(([title, body, color, icon]) => (
               <View key={title} style={[styles.capabilityCard, { borderColor: color + "44" }]}>
                 <Feather name={icon as any} size={16} color={color} />
@@ -252,8 +276,8 @@ export default function AgentsScreen() {
 
         <View style={styles.tabSwitcher}>
           {[
-            ["pipeline", "Pipeline", "git-branch"],
-            ["demo", "Live Demo", "play-circle"],
+            ["pipeline", ui.pipeline, "git-branch"],
+            ["demo", ui.liveDemo, "play-circle"],
           ].map(([key, label, icon]) => (
             <Pressable
               key={key}
@@ -268,7 +292,7 @@ export default function AgentsScreen() {
 
         {view === "pipeline" ? (
           <>
-            <Text style={styles.sectionTitle}>Node Architecture</Text>
+            <Text style={styles.sectionTitle}>{ui.nodeArchitecture}</Text>
             {PIPELINE_NODES.map(([name, role, color, icon], index) => (
               <View key={name} style={styles.nodeWrap}>
                 <View style={[styles.nodeCard, { borderColor: color + "55" }]}>
@@ -289,19 +313,19 @@ export default function AgentsScreen() {
 
             <Pressable style={styles.primaryBtn} onPress={runSample} disabled={isRunning}>
               <Feather name="play" size={18} color={Colors.white} />
-              <Text style={styles.primaryBtnText}>Run Standard Query</Text>
+              <Text style={styles.primaryBtnText}>{ui.runStandardQuery}</Text>
             </Pressable>
           </>
         ) : (
           <>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Detailed Demo Scenarios</Text>
+              <Text style={styles.sectionTitle}>{ui.detailedDemoScenarios}</Text>
               <Text style={styles.sectionDesc}>
                 Tap any scenario to see what the pipeline does, why it matters, and how the final answer is formatted.
               </Text>
             </View>
 
-            <View style={styles.scenarioGrid}>
+            <View style={[styles.scenarioGrid, isDesktop && styles.scenarioGridDesktop]}>
               {enrichedScenarios.map((scenario) => {
                 const isActive = scenario.key === activeScenario;
                 return (
@@ -333,7 +357,7 @@ export default function AgentsScreen() {
               })}
             </View>
 
-            <View style={styles.detailGrid}>
+            <View style={[styles.detailGrid, isDesktop && styles.detailGridDesktop]}>
               <View style={styles.detailCard}>
                 <Text style={styles.detailTitle}>
                   {activeMeta ? "How the pipeline handles it" : "Choose a scenario"}
@@ -371,10 +395,31 @@ export default function AgentsScreen() {
               </View>
             </View>
 
+            {result ? (
+              <View style={styles.resultCard}>
+                <View style={styles.resultHeader}>
+                  <Text style={styles.resultTitle}>{ui.formattedDemoOutput}</Text>
+                  <View style={styles.resultPill}>
+                    <Text style={styles.resultPillText}>{activeMeta?.focus || "Standard flow"}</Text>
+                  </View>
+                </View>
+                <FormattedAIContent
+                  content={result}
+                  variant="panel"
+                  accentColor={activeMeta?.color || Colors.primary}
+                />
+              </View>
+            ) : (
+              <Pressable style={styles.primaryBtn} onPress={runSample} disabled={isRunning}>
+                <Feather name="play" size={18} color={Colors.white} />
+                <Text style={styles.primaryBtnText}>{ui.runStandardQuery}</Text>
+              </Pressable>
+            )}
+
             {activeSteps.length > 0 ? (
               <View style={styles.executionPanel}>
                 <View style={styles.executionHeader}>
-                  <Text style={styles.executionTitle}>Pipeline Execution</Text>
+                  <Text style={styles.executionTitle}>{ui.pipelineExecution}</Text>
                   {isRunning ? (
                     <View style={styles.runningBadge}>
                       <View style={styles.runningDot} />
@@ -391,27 +436,6 @@ export default function AgentsScreen() {
                 ))}
               </View>
             ) : null}
-
-            {result ? (
-              <View style={styles.resultCard}>
-                <View style={styles.resultHeader}>
-                  <Text style={styles.resultTitle}>Formatted Demo Output</Text>
-                  <View style={styles.resultPill}>
-                    <Text style={styles.resultPillText}>{activeMeta?.focus || "Standard flow"}</Text>
-                  </View>
-                </View>
-                <FormattedAIContent
-                  content={result}
-                  variant="panel"
-                  accentColor={activeMeta?.color || Colors.primary}
-                />
-              </View>
-            ) : (
-              <Pressable style={styles.primaryBtn} onPress={runSample} disabled={isRunning}>
-                <Feather name="play" size={18} color={Colors.white} />
-                <Text style={styles.primaryBtnText}>Run Standard Query</Text>
-              </Pressable>
-            )}
           </>
         )}
       </ScrollView>
@@ -422,6 +446,7 @@ export default function AgentsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   content: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 96, gap: 18 },
+  contentDesktop: { width: "100%", maxWidth: 1180, alignSelf: "center", paddingHorizontal: 28 },
   heroCard: {
     backgroundColor: Colors.surface,
     borderRadius: 24,
@@ -444,12 +469,15 @@ const styles = StyleSheet.create({
   pageTitle: { fontSize: 28, fontFamily: "Inter_700Bold", color: Colors.text, letterSpacing: -0.5 },
   pageSubtitle: { fontSize: 14, fontFamily: "Inter_400Regular", color: Colors.textSecondary, lineHeight: 21 },
   capabilityStrip: { gap: 10 },
+  capabilityStripDesktop: { flexDirection: "row", flexWrap: "wrap" },
   capabilityCard: {
     backgroundColor: Colors.surfaceElevated,
     borderRadius: 16,
     borderWidth: 1,
     padding: 14,
     gap: 6,
+    flex: 1,
+    minWidth: 220,
   },
   capabilityTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: Colors.text },
   capabilityBody: { fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.textSecondary, lineHeight: 18 },
@@ -485,7 +513,8 @@ const styles = StyleSheet.create({
   primaryBtn: { flexDirection: "row", gap: 10, alignItems: "center", justifyContent: "center", backgroundColor: Colors.primary, borderRadius: 18, paddingVertical: 16 },
   primaryBtnText: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: Colors.white },
   scenarioGrid: { gap: 10 },
-  scenarioCard: { backgroundColor: Colors.surface, borderRadius: 20, borderWidth: 1, padding: 16, gap: 10 },
+  scenarioGridDesktop: { flexDirection: "row", flexWrap: "wrap" },
+  scenarioCard: { backgroundColor: Colors.surface, borderRadius: 20, borderWidth: 1, padding: 16, gap: 10, minWidth: 240, flex: 1 },
   scenarioHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   scenarioIcon: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center" },
   focusPill: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 },
@@ -494,7 +523,8 @@ const styles = StyleSheet.create({
   scenarioSubtitle: { fontSize: 13, fontFamily: "Inter_400Regular", color: Colors.textSecondary, lineHeight: 20 },
   scenarioQuery: { fontSize: 13, fontFamily: "Inter_500Medium", color: Colors.text, lineHeight: 19 },
   detailGrid: { gap: 10 },
-  detailCard: { backgroundColor: Colors.surface, borderRadius: 20, borderWidth: 1, borderColor: Colors.surfaceBorder, padding: 16, gap: 10 },
+  detailGridDesktop: { flexDirection: "row", flexWrap: "wrap" },
+  detailCard: { backgroundColor: Colors.surface, borderRadius: 20, borderWidth: 1, borderColor: Colors.surfaceBorder, padding: 16, gap: 10, minWidth: 240, flex: 1 },
   detailTitle: { fontSize: 15, fontFamily: "Inter_700Bold", color: Colors.text },
   detailRow: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
   detailDot: { width: 8, height: 8, borderRadius: 4, marginTop: 6 },

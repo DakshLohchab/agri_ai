@@ -15,6 +15,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Colors } from "@/constants/colors";
+import { useLocalizedStrings } from "@/hooks/useLocalizedStrings";
+import { useTabBarSpacing } from "@/hooks/useTabBarSpacing";
 
 type MandiRecord = {
   market: string;
@@ -277,9 +279,21 @@ async function saveCachedMarketData(
 }
 
 export default function MarketScreen() {
+  const ui = useLocalizedStrings({
+    market: "Market",
+    prices: "Prices",
+    govSchemes: "Gov Schemes",
+    apply: "Apply",
+    searchMarkets: "Search markets...",
+    filterByState: "Filter by state (e.g. Punjab)",
+    retry: "Retry",
+    liveDataUnavailable: "Live data unavailable",
+  });
   const { width } = useWindowDimensions();
   const isWeb = Platform.OS === "web";
   const isWide = width >= 768;
+  const isDesktop = width >= 1180;
+  const tabBarSpacing = useTabBarSpacing();
 
   const [activeTab, setActiveTab] = useState<"prices" | "schemes">("prices");
   const [selectedCommodity, setSelectedCommodity] = useState("Wheat");
@@ -417,7 +431,7 @@ export default function MarketScreen() {
   const commodityColor = COMMODITY_COLORS[selectedCommodity] ?? Colors.primary;
 
   const contentPad = isWeb && isWide ? 40 : 20;
-  const maxW = isWeb && isWide ? 900 : undefined;
+  const maxW = isWeb && isDesktop ? 1180 : isWeb && isWide ? 960 : undefined;
 
   return (
     <SafeAreaView style={styles.container} edges={["left", "right", "top"]}>
@@ -425,7 +439,7 @@ export default function MarketScreen() {
         style={{ flex: 1 }}
         contentContainerStyle={[
           styles.content,
-          { paddingHorizontal: contentPad, paddingBottom: isWeb ? 40 : 90 },
+          { paddingHorizontal: contentPad, paddingBottom: isWeb ? 40 : tabBarSpacing },
           maxW ? { alignSelf: "center", width: "100%", maxWidth: maxW } : null,
         ]}
         showsVerticalScrollIndicator={false}
@@ -438,7 +452,7 @@ export default function MarketScreen() {
         }
       >
         <View style={styles.pageHeader}>
-          <Text style={styles.pageTitle}>Market</Text>
+          <Text style={styles.pageTitle}>{ui.market}</Text>
           <View style={[styles.sourceBadge, {
             backgroundColor:
               liveData?.source === "live"
@@ -485,20 +499,20 @@ export default function MarketScreen() {
             onPress={() => setActiveTab("prices")}
           >
             <Feather name="trending-up" size={14} color={activeTab === "prices" ? Colors.white : Colors.textSecondary} />
-            <Text style={[styles.tabText, activeTab === "prices" && styles.tabTextActive]}>Prices</Text>
+            <Text style={[styles.tabText, activeTab === "prices" && styles.tabTextActive]}>{ui.prices}</Text>
           </Pressable>
           <Pressable
             style={[styles.tab, activeTab === "schemes" && styles.tabActive]}
             onPress={() => setActiveTab("schemes")}
           >
             <Feather name="shield" size={14} color={activeTab === "schemes" ? Colors.white : Colors.textSecondary} />
-            <Text style={[styles.tabText, activeTab === "schemes" && styles.tabTextActive]}>Gov Schemes</Text>
+            <Text style={[styles.tabText, activeTab === "schemes" && styles.tabTextActive]}>{ui.govSchemes}</Text>
           </Pressable>
         </View>
 
         {activeTab === "prices" && (
           <>
-            <View style={[styles.summaryRow, isWide && { flexWrap: "nowrap" }]}>
+            <View style={[styles.summaryRow, isWide && styles.summaryRowWide]}>
               {summaryLoading
                 ? [0, 1, 2].map((i) => (
                     <View key={i} style={[styles.summaryCard, { flex: 1, minWidth: 80 }]}>
@@ -579,7 +593,7 @@ export default function MarketScreen() {
                 <Feather name="map-pin" size={14} color={Colors.textMuted} />
                 <TextInput
                   style={styles.searchInput}
-                  placeholder="Filter by state (e.g. Punjab)"
+                  placeholder={ui.filterByState}
                   placeholderTextColor={Colors.textMuted}
                   value={stateFilter}
                   onChangeText={setStateFilter}
@@ -596,7 +610,7 @@ export default function MarketScreen() {
                 <Feather name="search" size={14} color={Colors.textMuted} />
                 <TextInput
                   style={styles.searchInput}
-                  placeholder="Search markets..."
+                  placeholder={ui.searchMarkets}
                   placeholderTextColor={Colors.textMuted}
                   value={searchQuery}
                   onChangeText={setSearchQuery}
@@ -607,7 +621,7 @@ export default function MarketScreen() {
                 onPress={handleStateFilter}
               >
                 <Feather name="filter" size={14} color={Colors.white} />
-                <Text style={styles.filterBtnText}>Apply</Text>
+                <Text style={styles.filterBtnText}>{ui.apply}</Text>
               </Pressable>
             </View>
 
@@ -638,7 +652,7 @@ export default function MarketScreen() {
                 )}
               </View>
 
-              <View style={styles.priceCompareRow}>
+              <View style={[styles.priceCompareRow, isWide && styles.priceCompareRowWide]}>
                 {mspInfo && mspInfo.msp > 0 && (
                   <View style={[styles.priceBox, { borderColor: Colors.info + "44", backgroundColor: Colors.info + "08" }]}>
                     <Text style={styles.priceBoxLabel}>MSP 2024-25</Text>
@@ -748,14 +762,14 @@ export default function MarketScreen() {
             ) : liveData && liveData.source === "offline" ? (
               <View style={styles.offlineCard}>
                 <Feather name="wifi-off" size={32} color={Colors.warning} />
-                <Text style={styles.offlineTitle}>Live data unavailable</Text>
+                <Text style={styles.offlineTitle}>{ui.liveDataUnavailable}</Text>
                 <Text style={styles.offlineDesc}>
                   We could not reach AGMARKNET for "{selectedCommodity}"{stateFilter ? ` in ${stateFilter}` : ""}.
                   Showing MSP reference rates above while live data is unavailable.
                 </Text>
                 <Pressable style={styles.retryBtn} onPress={handleRefresh}>
                   <Feather name="refresh-cw" size={14} color={Colors.white} />
-                  <Text style={styles.retryText}>Retry</Text>
+                  <Text style={styles.retryText}>{ui.retry}</Text>
                 </Pressable>
               </View>
             ) : error ? (
@@ -772,7 +786,7 @@ export default function MarketScreen() {
         )}
 
         {activeTab === "schemes" && (
-          <View style={[styles.schemeGrid, isWide && { flexDirection: "row", flexWrap: "wrap" }]}>
+          <View style={[styles.schemeGrid, isWide && styles.schemeGridWide]}>
             {SCHEMES.map((scheme) => (
               <View
                 key={scheme.name}
@@ -801,8 +815,6 @@ export default function MarketScreen() {
             ))}
           </View>
         )}
-
-        <View style={{ height: 32 }} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -839,6 +851,7 @@ const styles = StyleSheet.create({
   tabTextActive: { color: Colors.white, fontFamily: "Inter_600SemiBold" },
 
   summaryRow: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
+  summaryRowWide: { flexWrap: "nowrap" },
   summaryCard: {
     backgroundColor: Colors.surface,
     borderRadius: 14,
@@ -905,6 +918,7 @@ const styles = StyleSheet.create({
   detailGrade: { fontSize: 12, color: Colors.textMuted, fontFamily: "Inter_400Regular" },
 
   priceCompareRow: { flexDirection: "row", gap: 10 },
+  priceCompareRowWide: { gap: 12 },
   priceBox: {
     flex: 1,
     borderRadius: 14,
@@ -990,6 +1004,7 @@ const styles = StyleSheet.create({
   retryText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: Colors.white },
 
   schemeGrid: { gap: 12 },
+  schemeGridWide: { flexDirection: "row", flexWrap: "wrap" },
   schemeCard: {
     flexDirection: "row",
     gap: 14,

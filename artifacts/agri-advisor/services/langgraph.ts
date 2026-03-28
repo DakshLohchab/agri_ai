@@ -19,6 +19,7 @@
  */
 
 import { AgentStep } from "@/context/ChatContext";
+import { translateRichText, translateText } from "@/services/translation";
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -84,6 +85,11 @@ export type DemoScenarioKey =
   | "market_wheat"
   | "pest_alert"
   | "scheme_kisan";
+
+type QueryResponseMeta = {
+  baseResponse: string;
+  baseLanguage: string;
+};
 
 type PipelineResult = {
   final_response: string;
@@ -420,7 +426,7 @@ function classifyIntent(query: string): string {
 
   // Scheme — English + Hindi (योजना=scheme, सब्सिडी=subsidy, लोन=loan)
   if (
-    lower.match(/scheme|subsidy|kisan|yojana|government|loan|credit|insurance/) ||
+    lower.match(/\bgov(?:t)?\b|schemes?|\bpm-kisan\b|\bpm kisan\b|\bpmfby\b|\bkcc\b|\bpmksy\b|subsidy|kisan|yojana|government|loan|credit|insurance|farmer support/) ||
     /योजना|सब्सिडी|किसान|सरकार|लोन|बीमा|क्रेडिट|अनुदान/.test(query)
   )
     return "scheme";
@@ -430,6 +436,12 @@ function classifyIntent(query: string): string {
 
 function formatIndianNumber(n: number): string {
   return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(n);
+}
+
+function isLowConnectivityQuery(query: string): boolean {
+  return /weak internet|slow internet|poor internet|low wifi|low wi-fi|weak network|poor network|slow network|offline|connectivity/i.test(
+    query
+  );
 }
 
 // ─── Live Weather API (Open-Meteo — free, no key needed) ──────────────────────
@@ -500,7 +512,9 @@ async function fetchLiveMarketData(commodity: string, location: string | null): 
       offset: "0",
     });
 
-    const res = await fetch(`${AGMARKNET_URL}?${params}`);
+    const res = await fetch(`${AGMARKNET_URL}?${params}`, {
+      signal: AbortSignal.timeout(8000),
+    });
     const data = await res.json();
 
     if (!data.records || data.records.length === 0) return null;
@@ -577,7 +591,7 @@ async function callBackendPipeline(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query, location, language }),
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;
     return await res.json();
@@ -900,6 +914,311 @@ function buildSchemeResponse(): string {
 3. Contact Kisan Call Centre: 1800-180-1551 (free, 24x7)`;
 }
 
+function buildWeatherResponseHindi(weatherData: any, commodity: string | null, location: string | null): string {
+  const placeName = location ? location : "आपके क्षेत्र";
+  const today = weatherData?.forecast?.[0];
+  if (!today) {
+    return `## मौसम अपडेट\n\nअभी लाइव मौसम डेटा उपलब्ध नहीं है। सिंचाई, छिड़काव या कटाई से पहले स्थानीय मौसम अपडेट फिर से जांचें।`;
+  }
+
+  const cropLine = commodity
+    ? `\n### फसल सलाह\n${commodity === "wheat" ? "गेहूं" : commodity === "cotton" ? "कपास" : commodity}: खेत की स्थिति देखकर ही अगला काम करें।`
+    : "";
+
+  return [
+    `## ${placeName} के लिए मौसम अपडेट`,
+    "",
+    `आज अधिकतम/न्यूनतम तापमान: ${today.max} C / ${today.min} C`,
+    `बारिश: ${today.rain_mm} मिमी`,
+    `हवा: ${today.wind_kmh} किमी/घंटा`,
+    "",
+    "### अभी क्या करें",
+    today.rain_mm > 5
+      ? "1. आज छिड़काव टालें और खेत में पानी निकासी की व्यवस्था देखें।"
+      : "1. अगर खेत तैयार है तो सूखे समय में छिड़काव या खाद का काम करें।",
+    "2. कटाई या सिंचाई से पहले अगले 2-3 दिन का मौसम फिर जांचें。",
+    cropLine,
+  ].join("\n");
+}
+
+function buildMarketResponseHindi(liveData: any, commodity: string, location: string | null): string {
+  const cropName =
+    commodity === "wheat" ? "गेहूं" :
+    commodity === "rice" ? "धान/चावल" :
+    commodity === "cotton" ? "कपास" :
+    commodity === "soybean" ? "सोयाबीन" :
+    commodity;
+  const top = liveData?.prices?.[0];
+  const avg = liveData?.avg_modal_price;
+  const msp = MSP_2024_25[commodity];
+
+  return [
+    `## ${cropName} मंडी अपडेट`,
+    "",
+    top
+      ? `नज़दीकी उपलब्ध मंडी संदर्भ: ${top.market}, ${top.state}`
+      : "अभी लाइव मंडी रिकॉर्ड सीमित हैं।",
+    avg ? `औसत भाव: Rs.${formatIndianNumber(avg)}/क्विंटल` : "",
+    msp ? `एमएसपी संदर्भ: Rs.${formatIndianNumber(msp.msp)}/${msp.unit}` : "",
+    "",
+    "### क्या करें",
+    "1. कम से कम 2-3 मंडियों के भाव की तुलना करें।",
+    "2. परिवहन खर्च जोड़कर ही बेचने का निर्णय लें।",
+    "3. अगर भाव एमएसपी से कम है तो सरकारी खरीद केंद्र की जानकारी लें।",
+  ].filter(Boolean).join("\n");
+}
+
+function buildPestResponseHindi(query: string, commodity: string | null, location: string | null): string {
+  const cropName =
+    commodity === "cotton" ? "कपास" :
+    commodity === "wheat" ? "गेहूं" :
+    commodity === "rice" ? "धान" :
+    commodity ? commodity : "फसल";
+  const locationLine = location ? `\nस्थान: ${location}` : "";
+
+  return [
+    `## ${cropName} के लिए कीट/रोग सलाह`,
+    "",
+    `${cropName} में कीट या रोग का खतरा हो सकता है। लक्षण देखकर ही दवा तय करें।${locationLine}`,
+    "",
+    "### अभी क्या करें",
+    "1. 15-20 पौधों की जांच करें और पत्तियों/तनों पर लक्षण देखें।",
+    "2. प्रभावित हिस्से की साफ फोटो लेकर कृषि अधिकारी या KVK को दिखाएं।",
+    "3. बिना पुष्टि के तेज दवा का छिड़काव न करें।",
+    "4. सुबह या शाम में ही छिड़काव करें, तेज धूप या बारिश से पहले नहीं।",
+  ].join("\n");
+}
+
+function buildSchemeResponseHindi(): string {
+  return [
+    "## किसानों के लिए सरकारी योजनाएं",
+    "",
+    "### PM-KISAN",
+    "- लाभ: Rs.6,000 प्रति वर्ष",
+    "- पात्रता: पात्र किसान परिवार",
+    "- आवेदन: pmkisan.gov.in या CSC केंद्र",
+    "",
+    "### PMFBY",
+    "- लाभ: फसल बीमा",
+    "- आवेदन: बैंक, CSC, कृषि विभाग",
+    "",
+    "### Kisan Credit Card",
+    "- लाभ: कम ब्याज पर फसल ऋण",
+    "- आवेदन: नजदीकी बैंक",
+    "",
+    "### क्या करें",
+    "1. आधार, बैंक पासबुक और भूमि रिकॉर्ड तैयार रखें।",
+    "2. CSC या कृषि विभाग में आवेदन स्थिति पूछें।",
+  ].join("\n");
+}
+
+function buildPestResponseHindiRich(
+  commodity: string | null,
+  location: string | null
+): string {
+  const cropName =
+    commodity === "cotton" ? "कपास" :
+    commodity === "wheat" ? "गेहूं" :
+    commodity === "rice" ? "धान" :
+    commodity === "tomato" ? "टमाटर" :
+    commodity ? commodity : "फसल";
+
+  const pestDB: Record<string, { pests: string[]; symptoms: string[]; treatment: string[] }> = {
+    wheat: {
+      pests: ["पीला रतुआ", "भूरा रतुआ", "चूर्णिल फफूंदी", "माहू"],
+      symptoms: [
+        "पत्तियों पर पीली या नारंगी धारियां",
+        "पत्तियों पर भूरे दानेदार धब्बे",
+        "पत्तियों पर सफेद चूर्ण जैसी परत",
+        "पत्तियां मुड़ना और चिपचिपा रस दिखना",
+      ],
+      treatment: [
+        "प्रोपीकोनाज़ोल 25 EC @ 0.1%",
+        "टेबुकोनाज़ोल 250 EW @ 0.1%",
+        "सल्फर 80 WP @ 0.2%",
+        "इमिडाक्लोप्रिड 17.8 SL @ 0.05%",
+      ],
+    },
+    rice: {
+      pests: ["ब्राउन प्लांट हॉपर", "ब्लास्ट रोग", "शीथ ब्लाइट", "लीफ फोल्डर"],
+      symptoms: [
+        "पौधों पर जले जैसे गोल पैच",
+        "पत्तियों पर हीरे जैसे धब्बे",
+        "शीथ पर अंडाकार घाव",
+        "मुड़ी हुई पत्तियां और मल जैसा पदार्थ",
+      ],
+      treatment: [
+        "बुप्रोफेजिन 25 SC @ 0.0125%",
+        "ट्राईसाइक्लाजोल 75 WP @ 0.06%",
+        "हेक्साकोनाज़ोल 5 EC @ 0.1%",
+        "क्लोरपायरिफॉस 20 EC @ 0.05%",
+      ],
+    },
+    cotton: {
+      pests: ["गुलाबी सुंडी", "सफेद मक्खी", "थ्रिप्स", "मिलीबग"],
+      symptoms: [
+        "टिंडों में छेद और अंदर की क्षति",
+        "पत्तियां पीली पड़ना, वायरस फैलने का खतरा",
+        "पत्तियों पर चांदी जैसा धूसर रंग",
+        "सफेद रूई जैसे गुच्छे",
+      ],
+      treatment: [
+        "इमामेक्टिन बेन्जोएट 5 SG @ 0.002%",
+        "पाइरीप्रोक्सीफेन 10 EC @ 0.05%",
+        "स्पिनोसैड 45 SC @ 0.03%",
+        "प्रोफेनोफॉस 50 EC @ 0.05%",
+      ],
+    },
+    tomato: {
+      pests: ["लीफ कर्ल वायरस", "अर्ली ब्लाइट", "लेट ब्लाइट", "फल छेदक"],
+      symptoms: [
+        "पत्तियां ऊपर की ओर मुड़ना और मोज़ेक लक्षण",
+        "पत्तियों पर गोल-गोल भूरे छल्ले",
+        "गीले काले धब्बे",
+        "फलों में छेद",
+      ],
+      treatment: [
+        "सफेद मक्खी नियंत्रण के लिए इमिडाक्लोप्रिड",
+        "मैनकोज़ेब 75 WP @ 0.2%",
+        "मेटालेक्सिल-एम + मैनकोज़ेब @ 0.25%",
+        "स्पिनोसैड 45 SC @ 0.03%",
+      ],
+    },
+  };
+
+  let md = `## कीट और रोग सलाह\n\n`;
+
+  if (commodity) {
+    const info = pestDB[commodity];
+    if (info) {
+      md += `### ${cropName} के सामान्य कीट और रोग\n\n`;
+      info.pests.forEach((pest, index) => {
+        md += `**${pest}**\n`;
+        md += `- लक्षण: ${info.symptoms[index]}\n`;
+        md += `- उपचार: ${info.treatment[index]}\n\n`;
+      });
+    }
+  }
+
+  md += `### समेकित कीट प्रबंधन (IPM) सिद्धांत\n`;
+  md += `1. **नियमित निगरानी करें** - हर सप्ताह खेत में अलग-अलग जगह से कम से कम 20 पौधों की जांच करें\n`;
+  md += `2. **आर्थिक क्षति स्तर देखें** - दवा का छिड़काव तभी करें जब कीट संख्या नुकसान की सीमा पार करे\n`;
+  md += `3. **जैविक नियंत्रण अपनाएं** - अंडों के परजीवीकरण के लिए ट्राइकोग्राम्मा कार्ड का उपयोग करें\n`;
+  md += `4. **फसल चक्र अपनाएं** - गैर-आतिथ्य फसल के साथ चक्र बदलकर कीट चक्र तोड़ें\n`;
+  md += `5. **छिड़काव का समय सही रखें** - सुबह 6-9 बजे या शाम 4-7 बजे छिड़काव अधिक प्रभावी रहता है\n\n`;
+
+  md += `### विशेषज्ञ सहायता\n`;
+  md += `- **किसान कॉल सेंटर:** 1800-180-1551 (निःशुल्क, 24x7)\n`;
+  md += `- **राज्य कृषि विभाग:** नजदीकी KVK (कृषि विज्ञान केंद्र) से संपर्क करें\n`;
+  md += `- **ICAR सलाह:** प्रभावित हिस्से की साफ फोटो लेकर नजदीकी कृषि अधिकारी को दिखाएं\n`;
+
+  if (location) {
+    md += `\n${location} के क्षेत्रीय अलर्ट के लिए NCIPM कीट निगरानी पोर्टल भी देखें।`;
+  }
+
+  return md;
+}
+
+function buildLowConnectivityResponseHindi(weatherData: any, marketData: any, commodity: string | null, location: string | null): string {
+  const placeName = location ? location : "आपके क्षेत्र";
+  const cropName = commodity === "wheat" ? "गेहूं" : commodity === "cotton" ? "कपास" : commodity || "फसल";
+  const today = weatherData?.forecast?.[0];
+  const top = marketData?.prices?.[0];
+
+  return [
+    "## कमजोर नेटवर्क में सलाह",
+    "",
+    `नेटवर्क कमजोर है, इसलिए ${placeName} के लिए हल्का फॉलबैक उत्तर दिया जा रहा है।`,
+    "",
+    "### मौसम",
+    today ? `आज बारिश: ${today.rain_mm} मिमी, हवा: ${today.wind_kmh} किमी/घंटा` : "लाइव मौसम उपलब्ध नहीं है।",
+    "",
+    "### बाजार",
+    top ? `${cropName} के लिए संदर्भ मंडी: ${top.market}, ${top.state}` : `${cropName} के लिए लाइव मंडी रिकॉर्ड सीमित हैं।`,
+    "",
+    "### क्या करें",
+    "1. बारिश की संभावना हो तो छिड़काव टालें।",
+    "2. मंडी में बेचने से पहले स्थानीय भाव की पुष्टि करें।",
+    "3. नेटवर्क ठीक होने पर फिर से लाइव डेटा जांचें।",
+  ].join("\n");
+}
+
+function buildGeneralResponseHindi(query: string, commodity: string | null, location: string | null): string {
+  const cropName = commodity
+    ? commodity === "wheat" ? "गेहूं" : commodity === "cotton" ? "कपास" : commodity
+    : "फसल";
+  const placeName = location ? location : "आपके क्षेत्र";
+
+  return [
+    "## कृषि सलाह",
+    "",
+    `${cropName} और ${placeName} के संदर्भ में यह प्रारंभिक सलाह है।`,
+    "",
+    "### क्या करें",
+    "1. मौसम देखकर ही सिंचाई, छिड़काव और कटाई का निर्णय लें।",
+    "2. नजदीकी मंडी के भाव की तुलना करें।",
+    "3. मिट्टी जांच और स्थानीय कृषि अधिकारी की सलाह लें।",
+  ].join("\n");
+}
+
+function buildLowConnectivityResponse(
+  weatherData: any,
+  marketData: any,
+  commodity: string | null,
+  location: string | null
+): string {
+  const crop = commodity ?? "wheat";
+  const placeName = location
+    ? location.charAt(0).toUpperCase() + location.slice(1)
+    : "your area";
+  const today = weatherData?.forecast?.[0];
+  const avgPrice = marketData?.avg_modal_price ?? marketData?.prices?.[0]?.modal_price ?? null;
+  const topMarket = marketData?.prices?.[0];
+
+  const lines: string[] = [
+    "## Low-connectivity advisory",
+    "",
+    `Connectivity is weak, so I am using a lightweight fallback for ${placeName}.`,
+    "",
+    "### Weather snapshot",
+  ];
+
+  if (today) {
+    lines.push(
+      `Today max/min: ${today.max} C / ${today.min} C`,
+      `Expected rain: ${today.rain_mm} mm`,
+      `Wind: ${today.wind_kmh} km/h`,
+      `Condition: ${today.description}`
+    );
+  } else {
+    lines.push("Live weather could not be fetched. Recheck rain conditions before spraying or harvesting.");
+  }
+
+  lines.push("", "### Market snapshot");
+  if (avgPrice) {
+    lines.push(
+      `${crop.charAt(0).toUpperCase() + crop.slice(1)} reference price: Rs.${formatIndianNumber(avgPrice)}/quintal`,
+      topMarket ? `Closest available mandi context: ${topMarket.market}, ${topMarket.state}` : "Using cached/reference mandi context"
+    );
+  } else {
+    lines.push(`Live mandi prices are not available right now. Use MSP/reference pricing for ${crop} until connectivity improves.`);
+  }
+
+  lines.push(
+    "",
+    "### What to do now",
+    today?.rain_mm > 5
+      ? "- Delay spraying today and check drainage in the field."
+      : "- Use the current dry window for spraying or fertilizer application if the field is ready.",
+    avgPrice
+      ? "- Compare this fallback price with your nearest mandi before selling."
+      : "- Hold produce briefly if possible and retry once the network is stable for live mandi data.",
+    "- Retry later for full live AGMARKNET and forecast enrichment."
+  );
+
+  return lines.join("\n");
+}
+
 function buildGeneralResponse(
   query: string,
   commodity: string | null,
@@ -941,6 +1260,177 @@ function buildGeneralResponse(
   return md;
 }
 
+type QueryIssueKind = "invalid" | "ambiguous";
+
+type QueryIssue = {
+  kind: QueryIssueKind;
+  title: string;
+  message: string;
+  fixes: string[];
+  example: string;
+};
+
+function hasRecognizableAgricultureTopic(query: string): boolean {
+  return (
+    /crop|farming|farmer|seed|sowing|harvest|irrigation|drip|sprinkler|fertili[sz]er|manure|soil|scheme|subsidy|loan|credit|insurance|kisan|yojana|weather|rain|market|mandi|price|msp|pest|disease|spray|pesticide/i.test(
+      query
+    ) ||
+    /à¤«à¤¸à¤²|à¤•à¤¿à¤¸à¤¾à¤¨|à¤¬à¥à¤†à¤ˆ|à¤•à¤Ÿà¤¾à¤ˆ|à¤¸à¤¿à¤‚à¤šà¤¾à¤ˆ|à¤–à¤¾à¤¦|à¤‰à¤°à¥à¤µà¤°à¤•|à¤®à¤¿à¤Ÿà¥à¤Ÿà¥€|à¤¯à¥‹à¤œà¤¨à¤¾|à¤¸à¤¬à¥à¤¸à¤¿à¤¡à¥€|à¤²à¥‹à¤¨|à¤¬à¥€à¤®à¤¾|à¤®à¥Œà¤¸à¤®|à¤¬à¤¾à¤°à¤¿à¤¶|à¤®à¤‚à¤¡à¥€|à¤­à¤¾à¤µ|à¤•à¥€à¤Ÿ|à¤°à¥‹à¤—|à¤›à¤¿à¤¡à¤¼à¤•à¤¾à¤µ/.test(
+      query
+    )
+  );
+}
+
+function isLikelyInvalidQuery(query: string): boolean {
+  const trimmed = query.trim();
+  if (!trimmed) return true;
+  if (trimmed.length < 3) return true;
+
+  const letters = (trimmed.match(/[A-Za-z\u0080-\uFFFF]/g) ?? []).length;
+  const digits = (trimmed.match(/\d/g) ?? []).length;
+  const symbols = (trimmed.match(/[^A-Za-z\u0080-\uFFFF\d\s]/g) ?? []).length;
+  const words = trimmed.split(/\s+/).filter(Boolean);
+
+  if (letters === 0 && digits > 0) return true;
+  if (symbols > letters + digits && trimmed.length < 18) return true;
+  if (words.length === 1 && /^(hi|hello|hey|test|ok|hmm)$/i.test(words[0])) return true;
+
+  return false;
+}
+
+function detectQueryIssue(
+  query: string,
+  intentType: string,
+  commodity: string | null,
+  location: string | null
+): QueryIssue | null {
+  const trimmed = query.trim();
+  const lower = trimmed.toLowerCase();
+  const words = trimmed.split(/\s+/).filter(Boolean);
+
+  if (isLikelyInvalidQuery(trimmed)) {
+    return {
+      kind: "invalid",
+      title: "The question is too incomplete to process",
+      message:
+        "I could not identify a usable agricultural request from the message you sent.",
+      fixes: [
+        "State the crop or topic clearly",
+        "Mention your problem, for example disease, weather, price, irrigation, or scheme",
+        "Add your location if the answer depends on your district or state",
+      ],
+      example: "Example: What is the wheat mandi price today in Haryana?",
+    };
+  }
+
+  const genericPhrases = [
+    "tell me about crop",
+    "tell me about the crop",
+    "help me with farming",
+    "give advice",
+    "what should i do",
+    "crop problem",
+    "market price",
+    "weather update",
+  ];
+
+  if (genericPhrases.some((phrase) => lower === phrase || lower.startsWith(`${phrase} `))) {
+    return {
+      kind: "ambiguous",
+      title: "The question is too broad",
+      message:
+        "The request is agricultural, but it is missing the details needed for a precise answer.",
+      fixes: [
+        "Add the crop name",
+        "Add your location",
+        "Say what you need help with: price, disease, weather, irrigation, fertilizer, or scheme",
+      ],
+      example: "Example: My cotton crop in Punjab has leaf curl. What should I spray?",
+    };
+  }
+
+  if (intentType === "general") {
+    const missingCrop = !commodity;
+    const missingLocation = !location || location === "India";
+    const tooShort = words.length < 4;
+    const hasTopic = hasRecognizableAgricultureTopic(trimmed);
+
+    if (missingCrop && (missingLocation || tooShort) && !hasTopic) {
+      return {
+        kind: "ambiguous",
+        title: "More detail is needed",
+        message:
+          "I can help, but the request does not yet specify enough context to give a reliable agricultural answer.",
+        fixes: [
+          missingCrop ? "Add the crop name" : "Keep the crop name",
+          missingLocation ? "Add your state or district" : "Keep the location",
+          "Describe the exact problem or goal",
+        ],
+        example: "Example: Should I irrigate wheat this week in Punjab based on expected rain?",
+      };
+    }
+  }
+
+  if (intentType === "market" && !commodity) {
+    return {
+      kind: "ambiguous",
+      title: "The market query is missing the crop",
+      message:
+        "To answer a mandi or price question, I need to know which crop or commodity you mean.",
+      fixes: [
+        "Add the crop name, for example wheat, rice, cotton, or soybean",
+        "Add the market area or state if you want local prices",
+        "Mention whether you want live mandi prices or sell/hold advice",
+      ],
+      example: "Example: What is the soybean mandi price today in Madhya Pradesh?",
+    };
+  }
+
+  if (intentType === "weather" && (!location || location === "India")) {
+    return {
+      kind: "ambiguous",
+      title: "The weather query is missing the location",
+      message:
+        "Weather advice depends on place, so I need your district, city, or state.",
+      fixes: [
+        "Add your village, district, or state",
+        "Mention the crop if you want crop-specific advice",
+        "Say whether you need rain, temperature, spray timing, or irrigation guidance",
+      ],
+      example: "Example: Will it rain this week in Ludhiana for wheat spraying?",
+    };
+  }
+
+  if (intentType === "pest" && !commodity) {
+    return {
+      kind: "ambiguous",
+      title: "The crop problem is missing the crop name",
+      message:
+        "Pest and disease advice changes by crop, so I need to know what crop is affected.",
+      fixes: [
+        "Add the crop name",
+        "Describe the symptoms clearly",
+        "Add location if you want region-specific alerts",
+      ],
+      example: "Example: My rice leaves have brown spots in Odisha. What disease is this?",
+    };
+  }
+
+  return null;
+}
+
+function buildQueryIssueResponse(issue: QueryIssue): string {
+  let md = `## ${issue.title}\n\n`;
+  md += `${issue.message}\n\n`;
+  md += `### What to fix\n`;
+  issue.fixes.forEach((fix, index) => {
+    md += `${index + 1}. ${fix}\n`;
+  });
+  md += `\n### Better example\n`;
+  md += `${issue.example}\n`;
+  return md;
+}
+
 // ─── Step Builder ──────────────────────────────────────────────────────────────
 
 function makeStep(
@@ -957,13 +1447,31 @@ function makeStep(
 export async function runAgentQuery(
   query: string,
   onStepUpdate: (steps: AgentStep[]) => void,
-  onComplete: (response: string, steps: AgentStep[]) => void,
+  onComplete: (response: string, steps: AgentStep[], meta?: QueryResponseMeta) => void,
   languageCode: string = "en"   // ← NEW: language code from LanguageContext
 ): Promise<void> {
   const steps: AgentStep[] = [];
-  const location = extractLocation(query) || "India";
-  const commodity = extractCommodity(query);
-  const intentType = classifyIntent(query);
+  const rawQuery = query.trim();
+  let processedQuery = rawQuery;
+  if (languageCode !== "en") {
+    try {
+      const normalizedQuery = await translateText(rawQuery, "en", "auto");
+      if (normalizedQuery.trim()) {
+        processedQuery = normalizedQuery.trim();
+      }
+    } catch {
+      processedQuery = rawQuery;
+    }
+  }
+  const trimmedQuery = processedQuery.trim();
+  const detectedLocation = extractLocation(trimmedQuery);
+  const location = detectedLocation || "India";
+  const commodity = extractCommodity(processedQuery);
+  const intentType = classifyIntent(processedQuery);
+  const lowConnectivity = isLowConnectivityQuery(trimmedQuery);
+  const wantsWeather = /weather|rain|rainfall|forecast|humid|wind|cloud|storm|बारिश|मौसम|पूर्वानुमान|वर्षा/i.test(trimmedQuery);
+  const wantsMarket = /price|mandi|market|msp|rate|sell|bhav|बाजार|मंडी|भाव|कीमत/i.test(trimmedQuery);
+  const queryIssue = detectQueryIssue(trimmedQuery, intentType, commodity, detectedLocation);
 
   const update = (s: AgentStep[]) => onStepUpdate([...s]);
 
@@ -978,19 +1486,73 @@ export async function runAgentQuery(
     mr: "Marathi", ta: "Tamil", gu: "Gujarati", kn: "Kannada",
     ml: "Malayalam", pa: "Punjabi", or: "Odia", ur: "Urdu",
   };
-  const languageName = langNameMap[languageCode] ?? "English";
+  const processingLanguageName = "English";
+  const outputLanguageName = langNameMap[languageCode] ?? "English";
 
-  const backendResult = await callBackendPipeline(query, location, languageName);
+  try {
+
+  if (queryIssue) {
+    steps[0] = makeStep(
+      "Guardrails",
+      queryIssue.kind === "invalid" ? "error" : "completed",
+      queryIssue.kind === "invalid"
+        ? "Input validation failed - the request is not usable yet"
+        : "Query is safe but needs clarification before advice can be given",
+      Date.now() - t1
+    );
+    update(steps);
+
+    steps.push(
+      makeStep(
+        "Intent",
+        queryIssue.kind === "invalid" ? "error" : "completed",
+        queryIssue.kind === "invalid"
+          ? "Detected an incomplete or invalid agricultural request"
+          : "Detected missing context and prepared a clarification response",
+        120
+      )
+    );
+    update(steps);
+
+    let issueResponse = buildQueryIssueResponse(queryIssue);
+    if (languageCode !== "en") {
+      try {
+        issueResponse = await translateRichText(issueResponse, languageCode, "en");
+      } catch {
+        // Keep English if translation fails.
+      }
+    }
+
+    onComplete(issueResponse, steps, { baseResponse: buildQueryIssueResponse(queryIssue), baseLanguage: "en" });
+    return;
+  }
+
+  const backendResult = await callBackendPipeline(
+    processedQuery,
+    location,
+    processingLanguageName
+  );
   const d1 = Date.now() - t1;
 
   if (backendResult && !backendResult.is_safe) {
     steps[0] = makeStep("Guardrails", "error", `${backendResult.guardrails_message}`, d1);
     update(steps);
-    onComplete(
+    let offDomainResponse =
       backendResult.final_response ||
+      "This query is outside the agricultural domain. Please ask about farming, crops, weather, or market prices.";
+    if (languageCode !== "en") {
+      try {
+        offDomainResponse = await translateRichText(offDomainResponse, languageCode, "en");
+      } catch {
+        // Keep original response if translation fails.
+      }
+    }
+    onComplete(offDomainResponse, steps, {
+      baseResponse:
+        backendResult.final_response ||
         "This query is outside the agricultural domain. Please ask about farming, crops, weather, or market prices.",
-      steps
-    );
+      baseLanguage: "en",
+    });
     return;
   }
 
@@ -1024,7 +1586,18 @@ export async function runAgentQuery(
     }
 
     // Backend already handles language — no client-side translation needed
-    onComplete(backendResult.final_response, steps);
+    let backendResponse = backendResult.final_response;
+    if (languageCode !== "en") {
+      try {
+        backendResponse = await translateRichText(backendResult.final_response, languageCode, "en");
+      } catch {
+        // Keep backend response if translation fails.
+      }
+    }
+    onComplete(backendResponse, steps, {
+      baseResponse: backendResult.final_response,
+      baseLanguage: "en",
+    });
     return;
   }
 
@@ -1050,10 +1623,10 @@ export async function runAgentQuery(
   let marketData: any = null;
 
   const [weather, market] = await Promise.allSettled([
-    intentType === "weather" || intentType === "general"
+    intentType === "weather" || intentType === "general" || lowConnectivity || wantsWeather
       ? fetchLiveWeather(location)
       : Promise.resolve(null),
-    intentType === "market"
+    intentType === "market" || lowConnectivity || wantsMarket
       ? fetchLiveMarketData(commodity || "wheat", location)
       : Promise.resolve(null),
   ]);
@@ -1120,30 +1693,52 @@ export async function runAgentQuery(
   update(steps);
   const t6 = Date.now();
 
+  let baseResponse = "";
   let finalResponse = "";
-  switch (intentType) {
-    case "weather":
-      finalResponse = buildWeatherResponse(
-        weatherData, commodity, location !== "India" ? location : null
-      );
-      break;
-    case "market":
-      finalResponse = buildMarketResponse(
-        marketData, commodity || "wheat", location !== "India" ? location : null
-      );
-      break;
-    case "pest":
-      finalResponse = buildPestResponse(
-        query, commodity, location !== "India" ? location : null
-      );
-      break;
-    case "scheme":
-      finalResponse = buildSchemeResponse();
-      break;
-    default:
-      finalResponse = buildGeneralResponse(
-        query, commodity, location !== "India" ? location : null
-      );
+  if (lowConnectivity && (wantsWeather || wantsMarket)) {
+    baseResponse = buildLowConnectivityResponse(
+      weatherData,
+      marketData,
+      commodity,
+      location !== "India" ? location : null
+    );
+    finalResponse = baseResponse;
+  } else {
+    switch (intentType) {
+      case "weather":
+        baseResponse = buildWeatherResponse(
+          weatherData, commodity, location !== "India" ? location : null
+        );
+        finalResponse = baseResponse;
+        break;
+      case "market":
+        baseResponse = buildMarketResponse(
+          marketData, commodity || "wheat", location !== "India" ? location : null
+        );
+        finalResponse = baseResponse;
+        break;
+      case "pest":
+        baseResponse = buildPestResponse(
+          processedQuery, commodity, location !== "India" ? location : null
+        );
+        finalResponse =
+          languageCode === "hi"
+            ? buildPestResponseHindiRich(
+                commodity,
+                location !== "India" ? location : null
+              )
+            : baseResponse;
+        break;
+      case "scheme":
+        baseResponse = buildSchemeResponse();
+        finalResponse = baseResponse;
+        break;
+      default:
+        baseResponse = buildGeneralResponse(
+          processedQuery, commodity, location !== "India" ? location : null
+        );
+        finalResponse = baseResponse;
+    }
   }
 
   const d6 = Date.now() - t6;
@@ -1153,34 +1748,67 @@ export async function runAgentQuery(
   update(steps);
 
   // ── Translation layer (only when language is not English) ─────────────────
-  if (languageCode !== "en") {
+  const usesDirectHindiResponse = languageCode === "hi" && intentType === "pest";
+  if (languageCode !== "en" && !usesDirectHindiResponse) {
     // Add a translation step to the UI so the user knows what's happening
     steps.push(makeStep(
       "Translation", "running",
-      `Translating response to ${languageName}... (MyMemory + LibreTranslate)`
+      `Translating response to ${outputLanguageName}... (MyMemory + LibreTranslate)`
     ));
     update(steps);
     const tTrans = Date.now();
 
     try {
-      finalResponse = await translateFullResponse(finalResponse, languageCode);
+      finalResponse = await translateRichText(baseResponse, languageCode, "en");
       steps[steps.length - 1] = makeStep(
         "Translation", "completed",
-        `Response translated to ${languageName} (MyMemory + LibreTranslate)`,
+        `Response translated to ${outputLanguageName} (MyMemory + LibreTranslate)`,
         Date.now() - tTrans
       );
     } catch (err) {
       // Translation failed entirely — keep English, mark step as error
       steps[steps.length - 1] = makeStep(
         "Translation", "error",
-        `Translation to ${languageName} failed — showing English response`,
+        `Translation to ${outputLanguageName} failed — showing English response`,
         Date.now() - tTrans
       );
     }
     update(steps);
   }
 
-  onComplete(finalResponse, steps);
+    onComplete(finalResponse, steps, { baseResponse, baseLanguage: "en" });
+  } catch (error) {
+    console.warn("runAgentQuery fallback failed:", error);
+    steps.push(
+      makeStep(
+        "Synthesis",
+        "error",
+        "The advisory pipeline hit an unexpected error. Showing a basic fallback response.",
+        0
+      )
+    );
+    update(steps);
+
+    const fallbackResponse =
+      intentType === "scheme"
+        ? buildSchemeResponse()
+        : hasRecognizableAgricultureTopic(trimmedQuery)
+          ? buildGeneralResponse(query, commodity, location !== "India" ? location : null)
+          : "I could not process that request. Ask about crops, weather, mandi prices, pests, irrigation, or government schemes.";
+    let localizedFallback = fallbackResponse;
+    if (languageCode !== "en") {
+      try {
+        localizedFallback = await translateRichText(fallbackResponse, languageCode, "en");
+      } catch {
+        localizedFallback = fallbackResponse;
+      }
+    }
+
+    onComplete(localizedFallback, steps, {
+      baseResponse: fallbackResponse,
+      baseLanguage: "en",
+    });
+  }
 }
 
 // ─── Demo Scenarios ────────────────────────────────────────────────────────────
@@ -1224,28 +1852,20 @@ async function runNarratedDemoScenario(
         },
       ],
       response: [
-        "## Off-domain query blocked",
+        "## This query is outside the agricultural domain",
         "",
-        "The pipeline stops at the **Guardrails** layer because the request is not related to agriculture.",
+        "I can help with farming-related questions such as:",
+        "- crop cultivation",
+        "- mandi or market prices",
+        "- weather and rainfall",
+        "- pests and diseases",
+        "- irrigation and fertilizer",
+        "- government farmer schemes",
         "",
-        "| Layer | What happens | Why it matters |",
-        "|-------|--------------|----------------|",
-        "| Guardrails | Detects the request is outside farming support. | Prevents hallucinated or irrelevant answers. |",
-        "| Routing | Skips downstream tools and models. | Saves time and keeps the stack focused on agri tasks. |",
-        "| Reply | Redirects the user to supported query types. | Helps the conversation recover quickly. |",
-        "",
-        "### What the model does",
-        "- Detects that the question is outside farming, crops, weather, markets, pests, or farmer schemes.",
-        "- Prevents downstream tools and models from wasting compute on irrelevant requests.",
-        "- Returns a safe redirect instead of inventing an answer.",
-        "",
-        "### User-facing behavior",
-        "- The user is told that AgriAdvisor is focused on agricultural support.",
-        "- The response suggests asking about crops, mandi prices, rainfall, pests, or government schemes.",
-        "",
-        "### Why this matters",
-        "- Keeps the app trustworthy and domain-specific.",
-        "- Reduces hallucinations on unrelated subjects.",
+        "### Try asking",
+        "1. What is the wheat mandi price in Haryana today?",
+        "2. Will it rain this week in Punjab?",
+        "3. What government schemes are available for farmers?",
       ].join("\n"),
     },
     ambiguous: {
@@ -1275,32 +1895,17 @@ async function runNarratedDemoScenario(
         },
       ],
       response: [
-        "## Clarification-first handling",
+        "## More detail is needed",
         "",
-        "The query is agricultural, but it is too broad to answer well.",
+        "I can help, but this request is too broad to answer reliably.",
         "",
-        "| Missing signal | Why it matters |",
-        "|---------------|----------------|",
-        "| Crop | Advice changes across cereals, vegetables, fruit, and fiber crops. |",
-        "| Location | Weather, soil, and mandi guidance depend on district and state. |",
-        "| User goal | Sowing, disease, irrigation, harvest, and selling need different actions. |",
+        "### What to add",
+        "1. The crop name",
+        "2. Your location",
+        "3. The exact need: sowing, disease, irrigation, fertilizer, weather, market, or scheme",
         "",
-        "### What the model notices",
-        "- The crop is not specified.",
-        "- The location is missing.",
-        "- The user goal is unclear: cultivation, disease, market, irrigation, or harvest timing.",
-        "",
-        "### What the model does",
-        "- Avoids making assumptions that could lead to poor farm advice.",
-        "- Asks for the missing details before recommending actions.",
-        "- Keeps the conversation moving with a short, targeted follow-up question.",
-        "",
-        "### Example clarification",
-        "Please tell me the crop, your location, and whether you need help with sowing, disease, irrigation, or selling.",
-        "",
-        "### What the user sees next",
-        "1. A short follow-up question instead of a vague one-size-fits-all answer.",
-        "2. A more precise recommendation as soon as the missing context is provided.",
+        "### Better example",
+        "My cotton crop in Punjab has leaf curl. What should I spray?",
       ].join("\n"),
     },
     low_wifi: {
@@ -1343,37 +1948,22 @@ async function runNarratedDemoScenario(
         },
       ],
       response: [
-        "## Low-WiFi resilience mode",
+        "## Low-connectivity advisory",
         "",
-        "This demo shows how the pipeline behaves when connectivity is weak or intermittent.",
+        "Connectivity is weak, so I am using a lightweight fallback response instead of waiting for all live services.",
         "",
-        "| Layer | Low-WiFi behavior | User impact |",
-        "|-------|-------------------|-------------|",
-        "| Web search | Skips heavy enrichment when latency is too high. | Faster response under poor connectivity. |",
-        "| Weather | Uses a lighter fallback path for essential forecast guidance. | Rain advice can still be shown. |",
-        "| Market | Falls back to cached mandi context or MSP references. | Pricing guidance does not disappear completely. |",
-        "| Synthesis | Labels fallback usage clearly. | The user knows what is live and what is cached. |",
+        "### Weather snapshot",
+        "Today/next window: Light-to-moderate rain risk should be assumed before spraying.",
+        "Field action: Avoid spray if clouds are building or rain is expected within a few hours.",
         "",
-        "### How the system adapts",
-        "- Avoids depending on every live source before answering.",
-        "- Skips non-critical enrichment when network latency is high.",
-        "- Falls back to cached, recent, or reference agricultural context.",
-        "- Still produces a practical answer instead of failing silently.",
+        "### Market snapshot",
+        "Use MSP or last known mandi rate as a temporary sell/hold reference.",
+        "If local traders are offering below typical support levels, wait for a clearer live-market check if storage is available.",
         "",
-        "### What still works under weak connectivity",
-        "- Safety checks and intent detection.",
-        "- Clarification-first behavior.",
-        "- Cached or reference-backed weather and market advice.",
-        "",
-        "### What improves when the network returns",
-        "- Fresh mandi records from AGMARKNET.",
-        "- Richer live weather enrichment.",
-        "- More complete cross-source comparisons.",
-        "",
-        "### Example outcome",
-        "1. Rainfall guidance is still shown from a lightweight fallback path.",
-        "2. Market advice can still rely on cached mandi context or MSP references.",
-        "3. The final response stays actionable even when full live enrichment is unavailable.",
+        "### What to do now",
+        "1. Delay spray if rain risk looks high.",
+        "2. Compare current trader offer with MSP/reference price before selling.",
+        "3. Retry later for full live AGMARKNET and weather enrichment.",
       ].join("\n"),
     },
   };

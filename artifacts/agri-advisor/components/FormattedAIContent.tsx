@@ -102,7 +102,7 @@ function parseTableRow(line: string): string[] {
 
 function parseStatLine(line: string): StatItem | null {
   const normalized = line.replace(/^\*\*([^*]+)\*\*:\s*/, "$1: ").trim();
-  const match = normalized.match(/^([A-Za-z][A-Za-z0-9 /()%+-]{1,32}):\s+(.+)$/);
+  const match = normalized.match(/^([\p{L}][\p{L}\p{N} /()%+.-]{1,40}):\s+(.+)$/u);
 
   if (!match) return null;
   if (match[2].startsWith("http")) return null;

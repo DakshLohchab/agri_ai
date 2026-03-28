@@ -15,6 +15,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Path, Circle, G, Text as SvgText } from "react-native-svg";
 import { Colors } from "@/constants/colors";
 import { useAuth } from "@/context/AuthContext";
+import { useLocalizedStrings } from "@/hooks/useLocalizedStrings";
+import { useTabBarSpacing } from "@/hooks/useTabBarSpacing";
 
 type WeatherDay = {
   date: string;
@@ -132,8 +134,19 @@ function TemperatureGraph({ weather, chartWidth }: { weather: WeatherDay[]; char
 
 export default function WeatherScreen() {
   const { user } = useAuth();
+  const ui = useLocalizedStrings({
+    forecast7Day: "7-Day Forecast",
+    liveWeatherPlanning: "Live weather data for better planning",
+    weather: "Weather",
+    fetchingLiveWeather: "Fetching live weather...",
+    retry: "Retry",
+    rainfallAdvisory: "Rainfall Advisory",
+  });
   const { width } = useWindowDimensions();
+  const isWeb = Platform.OS === "web";
   const isLargeScreen = width >= 768;
+  const isDesktop = width >= 1180;
+  const tabBarSpacing = useTabBarSpacing();
   const [weather, setWeather] = useState<WeatherDay[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -200,7 +213,12 @@ export default function WeatherScreen() {
     <SafeAreaView style={styles.container} edges={["left", "right", "top"]}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={[styles.content, styles.contentLarge, { paddingTop: 16, paddingBottom: 90 }]}
+        contentContainerStyle={[
+          styles.content,
+          styles.contentLarge,
+          isDesktop && styles.contentDesktop,
+          { paddingTop: 16, paddingBottom: isWeb ? 40 : tabBarSpacing },
+        ]}
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -216,13 +234,13 @@ export default function WeatherScreen() {
             <Feather name="cloud" size={24} color={Colors.weather} />
           </View>
           <View style={styles.headerCardContent}>
-            <Text style={styles.headerCardTitle}>7-Day Forecast</Text>
-            <Text style={styles.headerCardDesc}>Live weather data for better planning</Text>
+            <Text style={styles.headerCardTitle}>{ui.forecast7Day}</Text>
+            <Text style={styles.headerCardDesc}>{ui.liveWeatherPlanning}</Text>
           </View>
         </View>
 
         <View style={[styles.pageHeader, isLargeScreen && styles.pageHeaderLarge]}>
-          <Text style={[styles.pageTitle, isLargeScreen && styles.pageTitleLarge]}>Weather</Text>
+          <Text style={[styles.pageTitle, isLargeScreen && styles.pageTitleLarge]}>{ui.weather}</Text>
           <Text style={styles.pageLocation}>
             <Feather name="map-pin" size={14} color={Colors.textMuted} />
             {" "}{(user as any)?.location ?? "India"}
@@ -232,20 +250,20 @@ export default function WeatherScreen() {
       {isLoading ? (
         <View style={styles.loading}>
           <ActivityIndicator size="large" color={Colors.weather} />
-          <Text style={styles.loadingText}>Fetching live weather...</Text>
+          <Text style={styles.loadingText}>{ui.fetchingLiveWeather}</Text>
         </View>
       ) : error ? (
         <View style={styles.errorBox}>
           <Feather name="alert-circle" size={20} color={Colors.warning} />
           <Text style={styles.errorText}>{error}</Text>
           <Pressable style={styles.retryBtn} onPress={fetchWeather}>
-            <Text style={styles.retryText}>Retry</Text>
+            <Text style={styles.retryText}>{ui.retry}</Text>
           </Pressable>
         </View>
       ) : (
         <>
           {today && (
-            <View style={styles.heroCard}>
+            <View style={[styles.heroCard, isDesktop && styles.heroCardDesktop]}>
               <View style={styles.heroTop}>
                 <View>
                   <Text style={styles.tempBig}>{currentTemp ?? today.maxTemp}°C</Text>
@@ -286,7 +304,7 @@ export default function WeatherScreen() {
 
           <TemperatureGraph weather={weather} chartWidth={isLargeScreen ? Math.min(width * 0.9, 960) : Math.min(width - 40, 340)} />
 
-          <Text style={styles.sectionTitle}>7-Day Forecast</Text>
+          <Text style={styles.sectionTitle}>{ui.forecast7Day}</Text>
           <View style={styles.forecastList}>
             {weather.map((day, i) => {
               const w = getWeather(day.weatherCode);
@@ -309,7 +327,7 @@ export default function WeatherScreen() {
             <View style={styles.alertCard}>
               <Feather name="alert-triangle" size={18} color={Colors.warning} />
               <View style={styles.alertContent}>
-                <Text style={styles.alertTitle}>Rainfall Advisory</Text>
+                <Text style={styles.alertTitle}>{ui.rainfallAdvisory}</Text>
                 <Text style={styles.alertDesc}>
                   Expected {today.precipitationSum}mm rain today. Consider delaying spraying operations and protecting sensitive crops.
                 </Text>
@@ -318,8 +336,6 @@ export default function WeatherScreen() {
           )}
         </>
       )}
-
-      <View style={{ height: 32 }} />
     </ScrollView>
     </SafeAreaView>
   );
@@ -358,6 +374,7 @@ const styles = StyleSheet.create({
     padding: 24,
     gap: 20,
   },
+  heroCardDesktop: { padding: 28 },
   heroTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   tempBig: { fontSize: 56, fontFamily: "Inter_700Bold", color: Colors.text, letterSpacing: -2 },
   weatherLabel: { fontSize: 18, color: Colors.weather, fontFamily: "Inter_500Medium", marginTop: 4 },
@@ -396,6 +413,7 @@ const styles = StyleSheet.create({
   sourceText: { fontSize: 11, color: Colors.success, fontFamily: "Inter_500Medium" },
   sectionTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold", color: Colors.text },
   contentLarge: { width: "100%", maxWidth: 1000, alignSelf: "center" },
+  contentDesktop: { maxWidth: 1180 },
   graphTitleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   legendRow: { flexDirection: "row", gap: 10 },
   legendItem: { flexDirection: "row", alignItems: "center", gap: 4 },
