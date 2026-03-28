@@ -14,36 +14,44 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Colors } from "@/constants/colors";
-import { useAuth } from "@/context/AuthContext";
 
-const LOCATION_SUGGESTIONS = [
-  "Punjab",
-  "Haryana",
-  "Delhi",
-  "Maharashtra",
-  "Karnataka",
-  "Tamil Nadu",
-] as const;
+import { Colors } from "@/constants/colors";
+import { LANGUAGES } from "@/constants/languages";
+import { useAuth } from "@/context/AuthContext";
+import { useChat } from "@/context/ChatContext";
+import { useLanguage } from "@/context/LanguageContext";
+
+const LOCATION_SUGGESTIONS = ["Punjab", "Haryana", "Delhi", "Maharashtra", "Karnataka", "Tamil Nadu"];
+const LANGUAGE_CODES = ["en", "hi", "mr", "te", "pa", "bn"];
 
 function getInitials(name?: string, email?: string) {
   const source = (name || email || "Farmer").trim();
   const parts = source.split(/\s+/).filter(Boolean);
-
-  if (parts.length >= 2) {
-    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-  }
-
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
   return source.slice(0, 2).toUpperCase();
+}
+
+function formatLastActive(timestamp?: number) {
+  if (!timestamp) return "No chats yet";
+  const hours = Math.floor((Date.now() - timestamp) / (1000 * 60 * 60));
+  if (hours < 1) return "Active this hour";
+  if (hours < 24) return `Active ${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `Active ${days}d ago`;
+  return new Date(timestamp).toLocaleDateString();
 }
 
 export default function ProfileScreen() {
   const { user, logout, updateProfile } = useAuth();
+  const { language, setLanguage } = useLanguage();
+  const { conversations } = useChat();
+
   const [name, setName] = useState(user?.name || "");
   const [email, setEmail] = useState(user?.email || "");
   const [location, setLocation] = useState(user?.location || "");
   const [isLoading, setIsLoading] = useState(false);
   const [isLocating, setIsLocating] = useState(false);
+  const [isChangingLanguage, setIsChangingLanguage] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [lastSaveMode, setLastSaveMode] = useState<"remote" | "local" | null>(null);
@@ -56,99 +64,20 @@ export default function ProfileScreen() {
 
   const trimmedName = name.trim();
   const trimmedLocation = location.trim();
-  const userName = user?.name?.trim() || "";
-  const userLocation = user?.location?.trim() || "";
-  const initials = useMemo(
-    () => getInitials(trimmedName || user?.name, email),
-    [trimmedName, user?.name, email]
+  const initials = useMemo(() => getInitials(trimmedName || user?.name, email), [trimmedName, user?.name, email]);
+  const hasChanges = trimmedName !== (user?.name?.trim() || "") || trimmedLocation !== (user?.location?.trim() || "");
+  const completionCount = [trimmedName, email, trimmedLocation].filter(Boolean).length;
+  const completionPercent = Math.round((completionCount / 3) * 100);
+  const canSave = !!trimmedName && hasChanges && !isLoading && !isLocating && !isChangingLanguage;
+  const totalMessages = conversations.reduce((sum, item) => sum + item.messages.length, 0);
+  const lastActiveAt = conversations.reduce<number | undefined>(
+    (latest, item) => (!latest || item.updatedAt > latest ? item.updatedAt : latest),
+    undefined
   );
-  const profileCompletion = [trimmedName, email, trimmedLocation].filter(Boolean).length;
-  const completionPercent = Math.round((profileCompletion / 3) * 100);
-  const hasChanges = trimmedName !== userName || trimmedLocation !== userLocation;
-  const canSave = !!trimmedName && hasChanges && !isLoading && !isLocating;
-
-  const saveSuccessMessage = (savedRemotely: boolean) => {
-    setLastSaveMode(savedRemotely ? "remote" : "local");
-    setSuccess(
-      savedRemotely
-        ? "Profile updated successfully and synced to your account."
-        : "Profile saved locally. Server sync is pending."
-    );
-    setTimeout(() => setSuccess(""), 3000);
-  };
-
-  const handleSave = async () => {
-    if (!trimmedName) {
-      setError("Name is required");
-      return;
-    }
-
-    setError("");
-    setSuccess("");
-    setIsLoading(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
-    try {
-      const result = await updateProfile(trimmedName, trimmedLocation);
-      saveSuccessMessage(result.savedRemotely);
-      if (Platform.OS !== "web") {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      }
-    } catch (e: any) {
-      setError(e.message || "Failed to update profile");
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleUseCurrentLocation = async () => {
-    setError("");
-    setSuccess("");
-    setIsLocating(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-    try {
-      const permission = await ExpoLocation.requestForegroundPermissionsAsync();
-      if (permission.status !== "granted") {
-        throw new Error("Location permission was not granted.");
-      }
-
-      const coords = await ExpoLocation.getCurrentPositionAsync({
-        accuracy: ExpoLocation.Accuracy.Balanced,
-      });
-      const places = await ExpoLocation.reverseGeocodeAsync(coords.coords);
-      const bestPlace = places[0];
-      const nextLocation = [bestPlace?.city, bestPlace?.region, bestPlace?.country]
-        .filter(Boolean)
-        .slice(0, 2)
-        .join(", ");
-
-      if (!nextLocation) {
-        throw new Error("Could not detect a readable location.");
-      }
-
-      setLocation(nextLocation);
-      setSuccess("Current location detected. Review it and save when ready.");
-      setTimeout(() => setSuccess(""), 3000);
-    } catch (e: any) {
-      setError(e.message || "Unable to detect current location.");
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    } finally {
-      setIsLocating(false);
-    }
-  };
-
-  const handleLogout = async () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    try {
-      await logout();
-      router.replace("/(auth)/signin");
-    } catch (e: any) {
-      setError(e.message || "Failed to logout");
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    }
-  };
+  const languageChoices = useMemo(
+    () => LANGUAGE_CODES.map((code) => LANGUAGES.find((item) => item.code === code)).filter(Boolean),
+    []
+  );
 
   const syncLabel =
     lastSaveMode === "remote"
@@ -157,279 +86,329 @@ export default function ProfileScreen() {
         ? "Offline-safe local save"
         : "Ready to sync";
 
+  const showSuccess = (message: string, mode?: "remote" | "local") => {
+    if (mode) setLastSaveMode(mode);
+    setSuccess(message);
+    setTimeout(() => setSuccess(""), 3000);
+  };
+
+  const clearFeedback = () => {
+    setError("");
+    setSuccess("");
+  };
+
+  const handleSave = async () => {
+    if (!trimmedName) {
+      setError("Name is required");
+      return;
+    }
+
+    clearFeedback();
+    setIsLoading(true);
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    try {
+      const result = await updateProfile(trimmedName, trimmedLocation);
+      showSuccess(
+        result.savedRemotely
+          ? "Profile updated successfully and synced to your account."
+          : "Profile saved locally. Server sync is pending.",
+        result.savedRemotely ? "remote" : "local"
+      );
+      if (Platform.OS !== "web") {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+    } catch (e: any) {
+      setError(e.message || "Failed to update profile");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleUseCurrentLocation = async () => {
+    clearFeedback();
+    setIsLocating(true);
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    try {
+      const permission = await ExpoLocation.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") throw new Error("Location permission was not granted.");
+      const coords = await ExpoLocation.getCurrentPositionAsync({ accuracy: ExpoLocation.Accuracy.Balanced });
+      const places = await ExpoLocation.reverseGeocodeAsync(coords.coords);
+      const place = places[0];
+      const nextLocation = [place?.city, place?.region, place?.country].filter(Boolean).slice(0, 2).join(", ");
+      if (!nextLocation) throw new Error("Could not detect a readable location.");
+      setLocation(nextLocation);
+      showSuccess("Current location detected. Review it and save when ready.");
+    } catch (e: any) {
+      setError(e.message || "Unable to detect current location.");
+    } finally {
+      setIsLocating(false);
+    }
+  };
+
+  const handleLanguageChange = async (code: string) => {
+    const nextLanguage = LANGUAGES.find((item) => item.code === code);
+    if (!nextLanguage || nextLanguage.code === language.code) return;
+
+    clearFeedback();
+    setIsChangingLanguage(true);
+    try {
+      await setLanguage(nextLanguage);
+      showSuccess(`App language switched to ${nextLanguage.name}.`);
+      if (Platform.OS !== "web") await Haptics.selectionAsync();
+    } catch {
+      setError("Could not change language right now.");
+    } finally {
+      setIsChangingLanguage(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      await logout();
+      router.replace("/(auth)/signin");
+    } catch (e: any) {
+      setError(e.message || "Failed to logout");
+    }
+  };
+
   return (
-    <SafeAreaView style={styles.container} edges={["left", "right", "top", "bottom"]}>
+    <SafeAreaView style={styles.container} edges={["top", "right", "bottom", "left"]}>
       <View style={styles.header}>
-        <Pressable style={styles.backBtn} onPress={() => router.back()}>
+        <Pressable style={styles.iconButton} onPress={() => router.back()}>
           <Feather name="arrow-left" size={20} color={Colors.text} />
         </Pressable>
         <Text style={styles.headerTitle}>Profile</Text>
-        <View style={styles.headerPill}>
-          <Text style={styles.headerPillText}>{completionPercent}% complete</Text>
+        <View style={styles.badge}>
+          <Text style={styles.badgeText}>{completionPercent}% complete</Text>
         </View>
       </View>
 
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
-        <ScrollView
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
+      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <View style={styles.heroCard}>
-            <View style={styles.heroTop}>
-              <View style={styles.avatarShell}>
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>{initials}</Text>
-                </View>
+            <View style={styles.heroRow}>
+              <View style={styles.avatarWrap}>
+                <Text style={styles.avatarText}>{initials}</Text>
               </View>
-              <View style={styles.heroTextWrap}>
+              <View style={styles.heroCopy}>
+                <Text style={styles.heroEyebrow}>Farmer identity</Text>
                 <Text style={styles.heroTitle}>{trimmedName || user?.name || "Your profile"}</Text>
                 <Text style={styles.heroSubtitle}>{email || "No email available"}</Text>
-                <View style={styles.metaRow}>
-                  <View style={styles.metaPill}>
+                <View style={styles.pillRow}>
+                  <View style={styles.pill}>
                     <Feather name="map-pin" size={12} color={Colors.primaryLight} />
-                    <Text style={styles.metaPillText}>{trimmedLocation || "Add location"}</Text>
+                    <Text style={styles.pillText}>{trimmedLocation || "Add location"}</Text>
                   </View>
-                  <View style={styles.metaPill}>
-                    <Feather
-                      name={lastSaveMode === "local" ? "wifi-off" : "cloud"}
-                      size={12}
-                      color={Colors.info}
-                    />
-                    <Text style={styles.metaPillText}>{syncLabel}</Text>
+                  <View style={styles.pill}>
+                    <Feather name={lastSaveMode === "local" ? "wifi-off" : "cloud"} size={12} color={Colors.info} />
+                    <Text style={styles.pillText}>{syncLabel}</Text>
                   </View>
                 </View>
               </View>
             </View>
 
-            <View style={styles.progressSection}>
-              <View style={styles.progressHeader}>
-                <Text style={styles.progressTitle}>Profile strength</Text>
-                <Text style={styles.progressValue}>{profileCompletion}/3 fields</Text>
-              </View>
-              <View style={styles.progressTrack}>
-                <View style={[styles.progressFill, { width: `${completionPercent}%` }]} />
-              </View>
-              <Text style={styles.progressHint}>
-                A saved name and location help personalize weather, mandi, and advisory responses.
-              </Text>
+            <View style={styles.progressMeta}>
+              <Text style={styles.sectionTitle}>Profile strength</Text>
+              <Text style={styles.sectionHint}>{completionCount}/3 core fields</Text>
+            </View>
+            <View style={styles.progressTrack}>
+              <View style={[styles.progressFill, { width: `${completionPercent}%` }]} />
+            </View>
+            <Text style={styles.helper}>
+              Saved name, location, and language make weather, mandi, and advisory replies more personalized.
+            </Text>
+          </View>
+
+          <View style={styles.statsRow}>
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>{conversations.length}</Text>
+              <Text style={styles.statLabel}>Chats</Text>
+              <Text style={styles.statHint}>{formatLastActive(lastActiveAt)}</Text>
+            </View>
+            <View style={styles.statCard}>
+              <Text style={styles.statValue}>{totalMessages}</Text>
+              <Text style={styles.statLabel}>Messages</Text>
+              <Text style={styles.statHint}>Saved on device</Text>
             </View>
           </View>
 
-          <View style={styles.quickStatsRow}>
-            <View style={styles.quickCard}>
-              <Feather name="cpu" size={16} color={Colors.intent} />
-              <Text style={styles.quickValue}>{trimmedLocation ? "Personalized" : "Generic"}</Text>
-              <Text style={styles.quickLabel}>AI context</Text>
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Personalization readiness</Text>
+            <Text style={styles.sectionHint}>This shows what the assistant can already use before your next query.</Text>
+            {[
+              [
+                "cloud-rain",
+                "Weather precision",
+                trimmedLocation ? "Localized forecasts available." : "Add location for better local forecasts.",
+              ],
+              [
+                "shopping-bag",
+                "Market relevance",
+                trimmedLocation ? "Nearby mandi context is stronger." : "Saved location helps rank closer mandis.",
+              ],
+              [
+                "message-circle",
+                "Chat continuity",
+                conversations.length ? "Recent threads are ready to continue." : "Start chats to build reusable context.",
+              ],
+            ].map(([icon, title, description]) => (
+              <View key={title} style={styles.infoRow}>
+                <View style={styles.infoIcon}>
+                  <Feather name={icon as never} size={16} color={Colors.primary} />
+                </View>
+                <View style={styles.infoCopy}>
+                  <Text style={styles.infoTitle}>{title}</Text>
+                  <Text style={styles.infoDesc}>{description}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Personal details</Text>
+            <Text style={styles.sectionHint}>Keep this updated so the app can tailor advice better.</Text>
+
+            <Text style={styles.label}>Full Name</Text>
+            <View style={styles.inputWrap}>
+              <Feather name="user" size={18} color={Colors.textSecondary} />
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your name"
+                placeholderTextColor={Colors.textMuted}
+                value={name}
+                onChangeText={(text) => {
+                  setName(text);
+                  clearFeedback();
+                }}
+                editable={!isLoading && !isLocating && !isChangingLanguage}
+              />
             </View>
-            <View style={styles.quickCard}>
-              <Feather name="save" size={16} color={Colors.synthesis} />
-              <Text style={styles.quickValue}>{hasChanges ? "Unsaved" : "Saved"}</Text>
-              <Text style={styles.quickLabel}>Changes</Text>
+
+            <Text style={styles.label}>Email Address</Text>
+            <View style={[styles.inputWrap, styles.disabledWrap]}>
+              <Feather name="mail" size={18} color={Colors.textSecondary} />
+              <TextInput style={[styles.input, styles.disabledText]} value={email} editable={false} />
             </View>
-            <View style={styles.quickCard}>
-              <Feather name="shield" size={16} color={Colors.market} />
-              <Text style={styles.quickValue}>{lastSaveMode === "local" ? "Protected" : "Ready"}</Text>
-              <Text style={styles.quickLabel}>Fallback</Text>
+            <Text style={styles.helper}>Email is managed by authentication and cannot be changed here.</Text>
+
+            <View style={styles.labelRow}>
+              <Text style={styles.label}>Location</Text>
+              <Pressable style={styles.inlineChip} onPress={handleUseCurrentLocation} disabled={isLoading || isLocating || isChangingLanguage}>
+                <Feather name={isLocating ? "loader" : "crosshair"} size={13} color={Colors.primary} />
+                <Text style={styles.inlineChipText}>{isLocating ? "Detecting..." : "Use current"}</Text>
+              </Pressable>
+            </View>
+            <View style={styles.inputWrap}>
+              <Feather name="map-pin" size={18} color={Colors.textSecondary} />
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your district or state"
+                placeholderTextColor={Colors.textMuted}
+                value={location}
+                onChangeText={(text) => {
+                  setLocation(text);
+                  clearFeedback();
+                }}
+                editable={!isLoading && !isLocating && !isChangingLanguage}
+              />
+            </View>
+            <Text style={styles.helper}>Used for local weather, mandi prices, and region-aware guidance.</Text>
+
+            <View style={styles.chipRow}>
+              {LOCATION_SUGGESTIONS.map((item) => {
+                const active = trimmedLocation.toLowerCase() === item.toLowerCase();
+                return (
+                  <Pressable
+                    key={item}
+                    style={[styles.choiceChip, active && styles.choiceChipActive]}
+                    onPress={() => {
+                      setLocation(item);
+                      clearFeedback();
+                    }}
+                  >
+                    <Text style={[styles.choiceText, active && styles.choiceTextActive]}>{item}</Text>
+                  </Pressable>
+                );
+              })}
             </View>
           </View>
 
-          <View style={styles.formCard}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Personal details</Text>
-              <Text style={styles.sectionDesc}>
-                Keep this updated so the app can tailor advice better.
-              </Text>
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Full Name</Text>
-              <View style={styles.inputContainer}>
-                <Feather name="user" size={18} color={Colors.textSecondary} style={styles.inputIcon} />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter your name"
-                  placeholderTextColor={Colors.textMuted}
-                  value={name}
-                  onChangeText={(text) => {
-                    setName(text);
-                    setError("");
-                    setSuccess("");
-                  }}
-                  editable={!isLoading && !isLocating}
-                  maxLength={100}
-                />
-              </View>
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Email Address</Text>
-              <View style={[styles.inputContainer, styles.inputDisabled]}>
-                <Feather name="mail" size={18} color={Colors.textSecondary} style={styles.inputIcon} />
-                <TextInput style={[styles.input, styles.inputText]} value={email} editable={false} />
-              </View>
-              <Text style={styles.helpText}>
-                Email is managed by authentication and cannot be changed here.
-              </Text>
-            </View>
-
-            <View style={styles.fieldGroup}>
-              <View style={styles.labelRow}>
-                <Text style={styles.label}>Location</Text>
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.inlineAction,
-                    { opacity: pressed || isLocating ? 0.8 : 1 },
-                  ]}
-                  onPress={handleUseCurrentLocation}
-                  disabled={isLoading || isLocating}
-                >
-                  <Feather
-                    name={isLocating ? "loader" : "crosshair"}
-                    size={13}
-                    color={Colors.primary}
-                  />
-                  <Text style={styles.inlineActionText}>
-                    {isLocating ? "Detecting..." : "Use current"}
-                  </Text>
-                </Pressable>
-              </View>
-              <View style={styles.inputContainer}>
-                <Feather name="map-pin" size={18} color={Colors.textSecondary} style={styles.inputIcon} />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter your district or state"
-                  placeholderTextColor={Colors.textMuted}
-                  value={location}
-                  onChangeText={(text) => {
-                    setLocation(text);
-                    setError("");
-                    setSuccess("");
-                  }}
-                  editable={!isLoading && !isLocating}
-                  maxLength={100}
-                />
-              </View>
-              <Text style={styles.helpText}>
-                Your saved location is used for local weather, mandi prices, and region-aware guidance.
-              </Text>
-              <View style={styles.suggestionRow}>
-                {LOCATION_SUGGESTIONS.map((item) => {
-                  const active = trimmedLocation.toLowerCase() === item.toLowerCase();
-                  return (
-                    <Pressable
-                      key={item}
-                      style={[styles.suggestionChip, active && styles.suggestionChipActive]}
-                      onPress={() => {
-                        setLocation(item);
-                        setError("");
-                        setSuccess("");
-                      }}
-                      disabled={isLoading || isLocating}
-                    >
-                      <Text style={[styles.suggestionChipText, active && styles.suggestionChipTextActive]}>
-                        {item}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Language & delivery</Text>
+            <Text style={styles.sectionHint}>Choose the app language you prefer. You can still chat in mixed or local language.</Text>
+            <View style={styles.languageGrid}>
+              {languageChoices.map((item) => {
+                if (!item) return null;
+                const active = item.code === language.code;
+                return (
+                  <Pressable
+                    key={item.code}
+                    style={[styles.languageChip, active && styles.languageChipActive]}
+                    onPress={() => handleLanguageChange(item.code)}
+                    disabled={isLoading || isLocating || isChangingLanguage}
+                  >
+                    <Text style={[styles.languageName, active && styles.languageNameActive]}>{item.name}</Text>
+                    <Text style={[styles.languageNative, active && styles.languageNameActive]}>{item.nativeName}</Text>
+                  </Pressable>
+                );
+              })}
             </View>
           </View>
 
           {error ? (
-            <View style={styles.errorBox}>
+            <View style={[styles.feedbackBox, styles.errorBox]}>
               <Feather name="alert-circle" size={16} color={Colors.error} />
-              <Text style={styles.errorText}>{error}</Text>
+              <Text style={styles.feedbackText}>{error}</Text>
             </View>
           ) : null}
 
           {success ? (
-            <View style={styles.successBox}>
-              <Feather
-                name={lastSaveMode === "local" ? "wifi-off" : "check-circle"}
-                size={16}
-                color={lastSaveMode === "local" ? Colors.info : Colors.success}
-              />
-              <Text style={styles.successText}>{success}</Text>
+            <View style={[styles.feedbackBox, styles.successBox]}>
+              <Feather name={lastSaveMode === "local" ? "wifi-off" : "check-circle"} size={16} color={lastSaveMode === "local" ? Colors.info : Colors.success} />
+              <Text style={styles.feedbackText}>{success}</Text>
             </View>
           ) : null}
 
-          <View style={styles.accountCard}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Account & security</Text>
-              <Text style={styles.sectionDesc}>
-                Review core account controls and keep your login secure.
-              </Text>
-            </View>
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Account & resilience</Text>
+            <Text style={styles.sectionHint}>Your profile keeps helping the app even when connectivity is weak.</Text>
 
-            <Pressable
-              style={({ pressed }) => [styles.secondaryAction, { opacity: pressed ? 0.85 : 1 }]}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                router.push("/change-password");
-              }}
-              disabled={isLoading || isLocating}
-            >
-              <View style={styles.secondaryActionLeft}>
-                <View style={[styles.iconBadge, { backgroundColor: Colors.primary + "18" }]}>
-                  <Feather name="lock" size={18} color={Colors.primary} />
-                </View>
-                <View style={styles.secondaryActionTextWrap}>
-                  <Text style={styles.secondaryActionTitle}>Change password</Text>
-                  <Text style={styles.secondaryActionDesc}>
-                    Update your password and keep your account protected.
-                  </Text>
-                </View>
+            <Pressable style={styles.actionRow} onPress={() => router.push("/change-password")} disabled={isLoading || isLocating || isChangingLanguage}>
+              <View style={styles.infoIcon}>
+                <Feather name="lock" size={16} color={Colors.primary} />
+              </View>
+              <View style={styles.infoCopy}>
+                <Text style={styles.infoTitle}>Change password</Text>
+                <Text style={styles.infoDesc}>Review your account security and update credentials.</Text>
               </View>
               <Feather name="chevron-right" size={18} color={Colors.textSecondary} />
             </Pressable>
 
-            <View style={styles.syncCard}>
-              <View style={[styles.iconBadge, { backgroundColor: Colors.info + "18" }]}>
-                <Feather
-                  name={lastSaveMode === "local" ? "hard-drive" : "cloud"}
-                  size={18}
-                  color={Colors.info}
-                />
+            <View style={styles.infoRow}>
+              <View style={styles.infoIcon}>
+                <Feather name={lastSaveMode === "local" ? "hard-drive" : "cloud"} size={16} color={Colors.info} />
               </View>
-              <View style={styles.secondaryActionTextWrap}>
-                <Text style={styles.secondaryActionTitle}>Sync behavior</Text>
-                <Text style={styles.secondaryActionDesc}>
-                  Profile updates are saved to the server when available and fall back to local storage if connectivity is weak.
+              <View style={styles.infoCopy}>
+                <Text style={styles.infoTitle}>Offline-safe profile sync</Text>
+                <Text style={styles.infoDesc}>
+                  If the server is slow, the latest profile still remains on the device so weather, market, and advisory screens can use it.
                 </Text>
               </View>
             </View>
           </View>
 
-          <View style={styles.actionButtons}>
-            <Pressable
-              style={({ pressed }) => [
-                styles.saveBtn,
-                (!canSave || pressed) && styles.saveBtnMuted,
-              ]}
-              onPress={handleSave}
-              disabled={!canSave}
-            >
+          <View style={styles.actions}>
+            <Pressable style={[styles.primaryButton, !canSave && styles.buttonMuted]} onPress={handleSave} disabled={!canSave}>
               <Feather name={isLoading ? "loader" : "save"} size={18} color={Colors.white} />
-              <Text style={styles.saveBtnText}>
-                {isLoading ? "Saving..." : hasChanges ? "Save Changes" : "No Changes Yet"}
-              </Text>
+              <Text style={styles.primaryButtonText}>{isLoading ? "Saving..." : hasChanges ? "Save Changes" : "No Changes Yet"}</Text>
             </Pressable>
 
-            <Pressable
-              style={({ pressed }) => [
-                styles.logoutBtn,
-                { opacity: pressed || isLoading || isLocating ? 0.8 : 1 },
-              ]}
-              onPress={handleLogout}
-              disabled={isLoading || isLocating}
-            >
+            <Pressable style={styles.secondaryButton} onPress={handleLogout} disabled={isLoading || isLocating || isChangingLanguage}>
               <Feather name="log-out" size={18} color={Colors.error} />
-              <Text style={styles.logoutBtnText}>Sign Out</Text>
+              <Text style={styles.secondaryButtonText}>Sign Out</Text>
             </Pressable>
           </View>
         </ScrollView>
@@ -439,10 +418,8 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
+  flex: { flex: 1 },
+  container: { flex: 1, backgroundColor: Colors.background },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -451,97 +428,40 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: Colors.surfaceBorder,
-    backgroundColor: Colors.background,
   },
-  backBtn: {
+  iconButton: {
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: Colors.surface,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: Colors.surfaceBorder,
-  },
-  headerTitle: {
-    fontSize: 19,
-    fontFamily: "Inter_700Bold",
-    color: Colors.text,
-  },
-  headerPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: Colors.primary + "18",
-    minWidth: 86,
-    alignItems: "center",
-  },
-  headerPillText: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    color: Colors.primaryLight,
-  },
-  content: {
-    paddingHorizontal: 20,
-    paddingVertical: 20,
-    paddingBottom: 36,
-    gap: 14,
-  },
-  heroCard: {
     backgroundColor: Colors.surface,
-    borderRadius: 24,
     borderWidth: 1,
     borderColor: Colors.surfaceBorder,
-    padding: 18,
-    gap: 18,
   },
-  heroTop: {
-    flexDirection: "row",
-    gap: 16,
+  headerTitle: { fontSize: 19, fontFamily: "Inter_700Bold", color: Colors.text },
+  badge: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: Colors.primary + "18" },
+  badgeText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: Colors.primaryLight },
+  content: { padding: 20, paddingBottom: 36, gap: 14 },
+  heroCard: { backgroundColor: Colors.surface, borderRadius: 24, borderWidth: 1, borderColor: Colors.surfaceBorder, padding: 18, gap: 14 },
+  heroRow: { flexDirection: "row", gap: 16, alignItems: "center" },
+  avatarWrap: {
+    width: 78,
+    height: 78,
+    borderRadius: 39,
     alignItems: "center",
-  },
-  avatarShell: {
-    padding: 3,
-    borderRadius: 999,
-    backgroundColor: Colors.primary + "18",
-  },
-  avatar: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
+    justifyContent: "center",
     backgroundColor: Colors.primary + "20",
     borderWidth: 1,
     borderColor: Colors.primary + "44",
-    alignItems: "center",
-    justifyContent: "center",
   },
-  avatarText: {
-    color: Colors.primaryLight,
-    fontSize: 26,
-    fontFamily: "Inter_700Bold",
-    letterSpacing: 0.5,
-  },
-  heroTextWrap: {
-    flex: 1,
-    gap: 6,
-  },
-  heroTitle: {
-    fontSize: 21,
-    fontFamily: "Inter_700Bold",
-    color: Colors.text,
-  },
-  heroSubtitle: {
-    fontSize: 13,
-    fontFamily: "Inter_400Regular",
-    color: Colors.textSecondary,
-  },
-  metaRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginTop: 2,
-  },
-  metaPill: {
+  avatarText: { color: Colors.primaryLight, fontSize: 28, fontFamily: "Inter_700Bold" },
+  heroCopy: { flex: 1, gap: 6 },
+  heroEyebrow: { color: Colors.textMuted, fontSize: 11, fontFamily: "Inter_600SemiBold", textTransform: "uppercase", letterSpacing: 0.8 },
+  heroTitle: { color: Colors.text, fontSize: 22, fontFamily: "Inter_700Bold" },
+  heroSubtitle: { color: Colors.textSecondary, fontSize: 13, fontFamily: "Inter_400Regular" },
+  pillRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  pill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
@@ -552,321 +472,62 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.surfaceBorder,
   },
-  metaPillText: {
-    color: Colors.textSecondary,
-    fontSize: 11,
-    fontFamily: "Inter_500Medium",
-  },
-  progressSection: {
-    gap: 8,
-  },
-  progressHeader: {
+  pillText: { color: Colors.textSecondary, fontSize: 11, fontFamily: "Inter_500Medium" },
+  progressMeta: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  progressTrack: { height: 10, borderRadius: 999, overflow: "hidden", backgroundColor: Colors.surfaceElevated },
+  progressFill: { height: "100%", backgroundColor: Colors.primary, borderRadius: 999 },
+  statsRow: { flexDirection: "row", gap: 12 },
+  statCard: { flex: 1, backgroundColor: Colors.surface, borderRadius: 20, borderWidth: 1, borderColor: Colors.surfaceBorder, padding: 16, gap: 6 },
+  statValue: { color: Colors.text, fontSize: 24, fontFamily: "Inter_700Bold" },
+  statLabel: { color: Colors.text, fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  statHint: { color: Colors.textSecondary, fontSize: 12, lineHeight: 18, fontFamily: "Inter_400Regular" },
+  card: { backgroundColor: Colors.surface, borderRadius: 24, borderWidth: 1, borderColor: Colors.surfaceBorder, padding: 18, gap: 12 },
+  sectionTitle: { color: Colors.text, fontSize: 16, fontFamily: "Inter_700Bold" },
+  sectionHint: { color: Colors.textSecondary, fontSize: 12, lineHeight: 18, fontFamily: "Inter_400Regular" },
+  label: { color: Colors.text, fontSize: 13, fontFamily: "Inter_600SemiBold", marginTop: 4 },
+  labelRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 },
+  inputWrap: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  progressTitle: {
-    fontSize: 14,
-    fontFamily: "Inter_600SemiBold",
-    color: Colors.text,
-  },
-  progressValue: {
-    fontSize: 12,
-    fontFamily: "Inter_500Medium",
-    color: Colors.textSecondary,
-  },
-  progressTrack: {
-    height: 10,
-    borderRadius: 999,
-    backgroundColor: Colors.surfaceElevated,
-    overflow: "hidden",
-  },
-  progressFill: {
-    height: "100%",
-    borderRadius: 999,
-    backgroundColor: Colors.primary,
-  },
-  progressHint: {
-    fontSize: 12,
-    lineHeight: 18,
-    fontFamily: "Inter_400Regular",
-    color: Colors.textSecondary,
-  },
-  quickStatsRow: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  quickCard: {
-    flex: 1,
-    backgroundColor: Colors.surface,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: Colors.surfaceBorder,
-    paddingHorizontal: 12,
-    paddingVertical: 14,
-    gap: 6,
-  },
-  quickValue: {
-    color: Colors.text,
-    fontSize: 14,
-    fontFamily: "Inter_700Bold",
-  },
-  quickLabel: {
-    color: Colors.textMuted,
-    fontSize: 11,
-    fontFamily: "Inter_500Medium",
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-  },
-  formCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: Colors.surfaceBorder,
-    padding: 18,
-    gap: 18,
-  },
-  accountCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: Colors.surfaceBorder,
-    padding: 18,
-    gap: 16,
-  },
-  sectionHeader: {
-    gap: 4,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontFamily: "Inter_700Bold",
-    color: Colors.text,
-  },
-  sectionDesc: {
-    fontSize: 12,
-    lineHeight: 18,
-    fontFamily: "Inter_400Regular",
-    color: Colors.textSecondary,
-  },
-  fieldGroup: {
-    gap: 8,
-  },
-  labelRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
     gap: 10,
-  },
-  label: {
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-    color: Colors.text,
-    marginLeft: 2,
-  },
-  inlineAction: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: Colors.primary + "12",
-  },
-  inlineActionText: {
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    color: Colors.primary,
-  },
-  inputContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: Colors.surfaceBorder,
-    backgroundColor: Colors.surfaceElevated,
-    paddingHorizontal: 14,
     minHeight: 52,
-    gap: 10,
-  },
-  inputDisabled: {
-    opacity: 0.7,
-  },
-  inputIcon: {
-    paddingVertical: 8,
-  },
-  input: {
-    flex: 1,
-    color: Colors.text,
-    fontFamily: "Inter_400Regular",
-    fontSize: 15,
-    paddingVertical: 14,
-  },
-  inputText: {
-    color: Colors.textMuted,
-  },
-  helpText: {
-    fontSize: 12,
-    lineHeight: 18,
-    fontFamily: "Inter_400Regular",
-    color: Colors.textMuted,
-    marginLeft: 2,
-  },
-  suggestionRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginTop: 2,
-  },
-  suggestionChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
+    paddingHorizontal: 14,
+    borderRadius: 14,
     backgroundColor: Colors.surfaceElevated,
     borderWidth: 1,
     borderColor: Colors.surfaceBorder,
   },
-  suggestionChipActive: {
-    backgroundColor: Colors.primary + "18",
-    borderColor: Colors.primary + "44",
-  },
-  suggestionChipText: {
-    fontSize: 12,
-    fontFamily: "Inter_500Medium",
-    color: Colors.textSecondary,
-  },
-  suggestionChipTextActive: {
-    color: Colors.primaryLight,
-  },
-  errorBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    borderRadius: 16,
-    backgroundColor: "rgba(239, 68, 68, 0.12)",
-    borderWidth: 1,
-    borderColor: "rgba(239, 68, 68, 0.24)",
-  },
-  errorText: {
-    color: "#FCA5A5",
-    fontFamily: "Inter_500Medium",
-    fontSize: 13,
-    lineHeight: 18,
-    flex: 1,
-  },
-  successBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    borderRadius: 16,
-    backgroundColor: "rgba(34, 197, 94, 0.12)",
-    borderWidth: 1,
-    borderColor: "rgba(34, 197, 94, 0.24)",
-  },
-  successText: {
-    color: "#BBF7D0",
-    fontFamily: "Inter_500Medium",
-    fontSize: 13,
-    lineHeight: 18,
-    flex: 1,
-  },
-  secondaryAction: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    borderRadius: 16,
-    backgroundColor: Colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: Colors.surfaceBorder,
-  },
-  secondaryActionLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    flex: 1,
-  },
-  secondaryActionTextWrap: {
-    flex: 1,
-    gap: 3,
-  },
-  secondaryActionTitle: {
-    fontSize: 14,
-    fontFamily: "Inter_600SemiBold",
-    color: Colors.text,
-  },
-  secondaryActionDesc: {
-    fontSize: 12,
-    lineHeight: 18,
-    fontFamily: "Inter_400Regular",
-    color: Colors.textSecondary,
-  },
-  iconBadge: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  syncCard: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    borderRadius: 16,
-    backgroundColor: Colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: Colors.surfaceBorder,
-  },
-  actionButtons: {
-    gap: 12,
-    marginTop: 4,
-  },
-  saveBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    backgroundColor: Colors.primary,
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 16,
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 14,
-    elevation: 8,
-  },
-  saveBtnMuted: {
-    opacity: 0.7,
-  },
-  saveBtnText: {
-    color: Colors.white,
-    fontFamily: "Inter_600SemiBold",
-    fontSize: 16,
-    letterSpacing: 0.3,
-  },
-  logoutBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    paddingVertical: 14,
-    paddingHorizontal: 24,
-    borderRadius: 16,
-    backgroundColor: Colors.surface,
-    borderWidth: 1.5,
-    borderColor: Colors.error,
-  },
-  logoutBtnText: {
-    color: Colors.error,
-    fontFamily: "Inter_600SemiBold",
-    fontSize: 15,
-  },
+  disabledWrap: { opacity: 0.7 },
+  input: { flex: 1, color: Colors.text, fontSize: 15, fontFamily: "Inter_400Regular", paddingVertical: 14 },
+  disabledText: { color: Colors.textMuted },
+  helper: { color: Colors.textMuted, fontSize: 12, lineHeight: 18, fontFamily: "Inter_400Regular" },
+  inlineChip: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: Colors.primary + "12" },
+  inlineChipText: { color: Colors.primary, fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  choiceChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: Colors.surfaceBorder, backgroundColor: Colors.surfaceElevated },
+  choiceChipActive: { backgroundColor: Colors.primary + "18", borderColor: Colors.primary + "44" },
+  choiceText: { color: Colors.textSecondary, fontSize: 12, fontFamily: "Inter_500Medium" },
+  choiceTextActive: { color: Colors.primaryLight },
+  languageGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  languageChip: { width: "31%", paddingHorizontal: 12, paddingVertical: 12, borderRadius: 16, borderWidth: 1, borderColor: Colors.surfaceBorder, backgroundColor: Colors.surfaceElevated, gap: 4 },
+  languageChipActive: { backgroundColor: Colors.primary + "18", borderColor: Colors.primary + "44" },
+  languageName: { color: Colors.text, fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  languageNameActive: { color: Colors.primaryLight },
+  languageNative: { color: Colors.textSecondary, fontSize: 12, fontFamily: "Inter_400Regular" },
+  infoRow: { flexDirection: "row", alignItems: "flex-start", gap: 12, padding: 14, borderRadius: 16, backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.surfaceBorder },
+  actionRow: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: 16, backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.surfaceBorder },
+  infoIcon: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", backgroundColor: Colors.primary + "18" },
+  infoCopy: { flex: 1, gap: 3 },
+  infoTitle: { color: Colors.text, fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  infoDesc: { color: Colors.textSecondary, fontSize: 12, lineHeight: 18, fontFamily: "Inter_400Regular" },
+  feedbackBox: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 14, paddingVertical: 14, borderRadius: 16, borderWidth: 1 },
+  errorBox: { backgroundColor: "rgba(239, 68, 68, 0.12)", borderColor: "rgba(239, 68, 68, 0.24)" },
+  successBox: { backgroundColor: "rgba(34, 197, 94, 0.12)", borderColor: "rgba(34, 197, 94, 0.24)" },
+  feedbackText: { flex: 1, color: Colors.text, fontSize: 13, lineHeight: 18, fontFamily: "Inter_500Medium" },
+  actions: { gap: 12, marginTop: 4 },
+  primaryButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, paddingVertical: 16, borderRadius: 16, backgroundColor: Colors.primary },
+  buttonMuted: { opacity: 0.7 },
+  primaryButtonText: { color: Colors.white, fontSize: 16, fontFamily: "Inter_600SemiBold" },
+  secondaryButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, paddingVertical: 14, borderRadius: 16, backgroundColor: Colors.surface, borderWidth: 1.5, borderColor: Colors.error },
+  secondaryButtonText: { color: Colors.error, fontSize: 15, fontFamily: "Inter_600SemiBold" },
 });
