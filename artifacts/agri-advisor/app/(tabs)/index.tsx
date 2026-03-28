@@ -5,53 +5,10 @@ import React, { useMemo } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Colors } from "@/constants/colors";
+import { getTranslations } from "@/constants/translations";
 import { useAuth } from "@/context/AuthContext";
 import { useChat } from "@/context/ChatContext";
-
-const QUICK_ACTIONS = [
-  {
-    icon: "cloud-rain",
-    title: "Rain this week",
-    subtitle: "See rainfall timing and field actions",
-    color: Colors.weather,
-    query: "Will it rain this week in my area and what should I do on the farm?",
-  },
-  {
-    icon: "trending-up",
-    title: "Mandi prices",
-    subtitle: "Check live rates and selling guidance",
-    color: Colors.market,
-    query: "What is the wheat mandi price today and should I sell now?",
-  },
-  {
-    icon: "alert-triangle",
-    title: "Pest diagnosis",
-    subtitle: "Turn symptoms into crop advice",
-    color: Colors.guardrails,
-    query: "My crop leaves have spots and the plant is weakening. What should I do?",
-  },
-  {
-    icon: "file-text",
-    title: "Govt schemes",
-    subtitle: "Understand eligibility and apply steps",
-    color: Colors.intent,
-    query: "Which farmer schemes can I apply for and what documents do I need?",
-  },
-  {
-    icon: "droplet",
-    title: "Irrigation plan",
-    subtitle: "Match watering to forecast conditions",
-    color: Colors.synthesis,
-    query: "Help me plan irrigation for this week based on expected rain.",
-  },
-  {
-    icon: "package",
-    title: "Fertilizer help",
-    subtitle: "Get crop-wise nutrient guidance",
-    color: Colors.secondary,
-    query: "What fertilizer dose should I use for my crop at this stage?",
-  },
-] as const;
+import { useLanguage } from "@/context/LanguageContext";
 
 const DASHBOARD_CARDS = [
   {
@@ -83,11 +40,15 @@ const AGENT_PIPELINE = [
   { name: "Synthesis", color: Colors.synthesis, icon: "cpu" },
 ] as const;
 
-function getGreeting() {
+function getGreeting(
+  goodMorning: string,
+  goodAfternoon: string,
+  goodEvening: string
+) {
   const hour = new Date().getHours();
-  if (hour < 12) return "Good Morning";
-  if (hour < 17) return "Good Afternoon";
-  return "Good Evening";
+  if (hour < 12) return goodMorning;
+  if (hour < 17) return goodAfternoon;
+  return goodEvening;
 }
 
 function getInitials(name?: string, email?: string) {
@@ -104,6 +65,53 @@ function getInitials(name?: string, email?: string) {
 export default function HomeScreen() {
   const { user } = useAuth();
   const { createConversation, conversations } = useChat();
+  const { language } = useLanguage();
+  const t = getTranslations(language.code);
+
+  const quickActions = [
+    {
+      icon: "cloud-rain",
+      title: t.rainForecast.replace("\n", " "),
+      subtitle: "See rainfall timing and field actions",
+      color: Colors.weather,
+      query: "Will it rain this week in my area and what should I do on the farm?",
+    },
+    {
+      icon: "trending-up",
+      title: t.wheatMandi.replace("\n", " "),
+      subtitle: "Check live rates and selling guidance",
+      color: Colors.market,
+      query: "What is the wheat mandi price today and should I sell now?",
+    },
+    {
+      icon: "alert-triangle",
+      title: t.pestAlerts.replace("\n", " "),
+      subtitle: "Turn symptoms into crop advice",
+      color: Colors.guardrails,
+      query: "My crop leaves have spots and the plant is weakening. What should I do?",
+    },
+    {
+      icon: "file-text",
+      title: t.pmKisan.replace("\n", " "),
+      subtitle: "Understand eligibility and apply steps",
+      color: Colors.intent,
+      query: "Which farmer schemes can I apply for and what documents do I need?",
+    },
+    {
+      icon: "droplet",
+      title: t.irrigation.replace("\n", " "),
+      subtitle: "Match watering to forecast conditions",
+      color: Colors.synthesis,
+      query: "Help me plan irrigation for this week based on expected rain.",
+    },
+    {
+      icon: "package",
+      title: t.fertilizerDosage.replace("\n", " "),
+      subtitle: "Get crop-wise nutrient guidance",
+      color: Colors.secondary,
+      query: "What fertilizer dose should I use for my crop at this stage?",
+    },
+  ] as const;
 
   const firstName = user?.name?.split(" ")[0] ?? "Farmer";
   const initials = getInitials(user?.name, user?.email);
@@ -116,17 +124,15 @@ export default function HomeScreen() {
       query ? Haptics.ImpactFeedbackStyle.Light : Haptics.ImpactFeedbackStyle.Medium
     );
     const id = createConversation();
-    router.push(
-      query
-        ? `/chat/${id}?preQuery=${encodeURIComponent(query)}`
-        : `/chat/${id}`
-    );
+    router.push(query ? `/chat/${id}?preQuery=${encodeURIComponent(query)}` : `/chat/${id}`);
   };
 
   const openConversation = (id: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.push(`/chat/${id}`);
   };
+
+  const greeting = getGreeting(t.goodMorning, t.goodAfternoon, t.goodEvening);
 
   return (
     <SafeAreaView style={styles.container} edges={["left", "right", "top"]}>
@@ -138,7 +144,7 @@ export default function HomeScreen() {
       >
         <View style={styles.headerRow}>
           <View style={styles.greetingBlock}>
-            <Text style={styles.greeting}>{getGreeting()},</Text>
+            <Text style={styles.greeting}>{greeting},</Text>
             <Text style={styles.name}>{firstName}</Text>
             <View style={styles.locationRow}>
               <Feather name="map-pin" size={12} color={Colors.textMuted} />
@@ -163,7 +169,9 @@ export default function HomeScreen() {
                 <View style={styles.statusDot} />
                 <Text style={styles.statusPillText}>AI farm desk ready</Text>
               </View>
-              <Text style={styles.heroTitle}>One place for weather, prices, pests, and next-step farm decisions.</Text>
+              <Text style={styles.heroTitle}>
+                One place for weather, prices, pests, and next-step farm decisions.
+              </Text>
               <Text style={styles.heroSubtitle}>
                 Ask a question, continue a recent conversation, or jump straight into a focused agri workflow.
               </Text>
@@ -202,13 +210,13 @@ export default function HomeScreen() {
               onPress={() => router.push("/(tabs)/agents")}
             >
               <Feather name="git-branch" size={18} color={Colors.text} />
-              <Text style={styles.secondaryActionText}>See AI Pipeline</Text>
+              <Text style={styles.secondaryActionText}>{t.viewAgentPipeline}</Text>
             </Pressable>
           </View>
         </View>
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Today’s Dashboard</Text>
+          <Text style={styles.sectionTitle}>Today&apos;s Dashboard</Text>
           <Text style={styles.sectionDesc}>A quick read of how the app can support you right now.</Text>
         </View>
 
@@ -238,7 +246,9 @@ export default function HomeScreen() {
                 : "Add your location in profile to improve weather, mandi, and region-specific recommendations."}
             </Text>
             <Pressable style={styles.inlineLink} onPress={() => router.push("/profile")}>
-              <Text style={styles.inlineLinkText}>{profileComplete ? "Review profile" : "Complete profile"}</Text>
+              <Text style={styles.inlineLinkText}>
+                {profileComplete ? "Review profile" : "Complete profile"}
+              </Text>
               <Feather name="arrow-right" size={14} color={Colors.primary} />
             </Pressable>
           </View>
@@ -257,12 +267,14 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <Text style={styles.sectionDesc}>Tap a card to start with a focused prompt instead of typing from scratch.</Text>
+          <Text style={styles.sectionTitle}>{t.quickQueries}</Text>
+          <Text style={styles.sectionDesc}>
+            Tap a card to start with a focused prompt instead of typing from scratch.
+          </Text>
         </View>
 
         <View style={styles.quickGrid}>
-          {QUICK_ACTIONS.map((item) => (
+          {quickActions.map((item) => (
             <Pressable
               key={item.title}
               style={({ pressed }) => [
@@ -337,7 +349,7 @@ export default function HomeScreen() {
         )}
 
         <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>How Answers Are Built</Text>
+          <Text style={styles.sectionTitle}>{t.aboutAgriAdvisor}</Text>
           <Text style={styles.sectionDesc}>Every answer passes through an explainable 6-node pipeline.</Text>
         </View>
 

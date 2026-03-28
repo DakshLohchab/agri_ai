@@ -58,7 +58,10 @@ export default function ProfileScreen() {
   const trimmedLocation = location.trim();
   const userName = user?.name?.trim() || "";
   const userLocation = user?.location?.trim() || "";
-  const initials = useMemo(() => getInitials(trimmedName || user?.name, email), [trimmedName, user?.name, email]);
+  const initials = useMemo(
+    () => getInitials(trimmedName || user?.name, email),
+    [trimmedName, user?.name, email]
+  );
   const profileCompletion = [trimmedName, email, trimmedLocation].filter(Boolean).length;
   const completionPercent = Math.round((profileCompletion / 3) * 100);
   const hasChanges = trimmedName !== userName || trimmedLocation !== userLocation;
@@ -237,7 +240,9 @@ export default function ProfileScreen() {
           <View style={styles.formCard}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Personal details</Text>
-              <Text style={styles.sectionDesc}>Keep this updated so the app can tailor advice better.</Text>
+              <Text style={styles.sectionDesc}>
+                Keep this updated so the app can tailor advice better.
+              </Text>
             </View>
 
             <View style={styles.fieldGroup}>
@@ -266,18 +271,27 @@ export default function ProfileScreen() {
                 <Feather name="mail" size={18} color={Colors.textSecondary} style={styles.inputIcon} />
                 <TextInput style={[styles.input, styles.inputText]} value={email} editable={false} />
               </View>
-              <Text style={styles.helpText}>Email is managed by authentication and cannot be changed here.</Text>
+              <Text style={styles.helpText}>
+                Email is managed by authentication and cannot be changed here.
+              </Text>
             </View>
 
             <View style={styles.fieldGroup}>
               <View style={styles.labelRow}>
                 <Text style={styles.label}>Location</Text>
                 <Pressable
-                  style={({ pressed }) => [styles.inlineAction, { opacity: pressed || isLocating ? 0.8 : 1 }]}
+                  style={({ pressed }) => [
+                    styles.inlineAction,
+                    { opacity: pressed || isLocating ? 0.8 : 1 },
+                  ]}
                   onPress={handleUseCurrentLocation}
                   disabled={isLoading || isLocating}
                 >
-                  <Feather name={isLocating ? "loader" : "crosshair"} size={13} color={Colors.primary} />
+                  <Feather
+                    name={isLocating ? "loader" : "crosshair"}
+                    size={13}
+                    color={Colors.primary}
+                  />
                   <Text style={styles.inlineActionText}>
                     {isLocating ? "Detecting..." : "Use current"}
                   </Text>
@@ -347,7 +361,9 @@ export default function ProfileScreen() {
           <View style={styles.accountCard}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>Account & security</Text>
-              <Text style={styles.sectionDesc}>Review core account controls and keep your login secure.</Text>
+              <Text style={styles.sectionDesc}>
+                Review core account controls and keep your login secure.
+              </Text>
             </View>
 
             <Pressable
@@ -364,7 +380,9 @@ export default function ProfileScreen() {
                 </View>
                 <View style={styles.secondaryActionTextWrap}>
                   <Text style={styles.secondaryActionTitle}>Change password</Text>
-                  <Text style={styles.secondaryActionDesc}>Update your password and keep your account protected.</Text>
+                  <Text style={styles.secondaryActionDesc}>
+                    Update your password and keep your account protected.
+                  </Text>
                 </View>
               </View>
               <Feather name="chevron-right" size={18} color={Colors.textSecondary} />
@@ -372,7 +390,11 @@ export default function ProfileScreen() {
 
             <View style={styles.syncCard}>
               <View style={[styles.iconBadge, { backgroundColor: Colors.info + "18" }]}>
-                <Feather name={lastSaveMode === "local" ? "hard-drive" : "cloud"} size={18} color={Colors.info} />
+                <Feather
+                  name={lastSaveMode === "local" ? "hard-drive" : "cloud"}
+                  size={18}
+                  color={Colors.info}
+                />
               </View>
               <View style={styles.secondaryActionTextWrap}>
                 <Text style={styles.secondaryActionTitle}>Sync behavior</Text>
