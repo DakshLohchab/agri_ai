@@ -51,7 +51,7 @@
     basebox,
     fill=white,
     text width=4.8cm,
-    minimum height=1.2cm,
+    minimum height=1.3cm,
     align=center
   }
 }
@@ -72,9 +72,9 @@
 \vspace{1mm}
 
 \begin{itemize}[leftmargin=*, label=\textcolor{brandblue}{\textnormal{\faLeaf}}, itemsep=2pt]
-    \item \textbf{System Drop Rate:} Approximately 250 queries drop per month due to rural network timeouts.
-    \item \textbf{Manual Recovery Cost:} Support agents must call back farmers to resolve dropped queries.
-    \item \textbf{Time \& Labor:} Each manual callback takes an average of 12 minutes.
+    \item \textbf{System Drop Rate:} Approximately 800 queries drop per month due to rural network timeouts.
+    \item \textbf{Manual Recovery Cost:} Support agents must manually call back farmers to resolve dropped queries.
+    \item \textbf{Time \& Labor:} Each manual callback/investigation takes an average of 15 minutes.
     \item \textbf{Labor Rate:} Fully loaded cost of a tier-1 support agent is \textnormal{\faInr} 150 per hour.
     \item \textbf{Fallback Efficiency:} The local offline reasoning engine successfully answers 80\% of dropped queries natively.
     \item \textbf{Customer Value:} Average Revenue Per User (ARPU) is \textnormal{\faInr} 50/month. Unanswered drops have a 20\% churn risk.
@@ -88,15 +88,15 @@
 \end{tikzpicture}
 \vspace{1mm}
 
-\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash\bfseries}p{4cm} X >{\raggedright\arraybackslash\bfseries}p{3cm}}
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash\bfseries}p{4cm} X >{\raggedright\arraybackslash\bfseries}p{3.2cm}}
 \toprule
 Metric & \normalfont\textbf{Calculation Logic} & Impact \\
 \midrule
-Total Manual Time Avoided & 250 drops $\times$ 80\% handled locally $\times$ 12 mins per resolution & 40 Hours / mo \\
+Total Manual Time Avoided & 800 drops $\times$ 80\% handled locally $\times$ 15 mins per resolution & 160 Hours / mo \\
 \addlinespace
-Labor Cost Reduced & 40 hours saved $\times$ \textnormal{\faInr} 150 per hour & \textnormal{\faInr} 6,000 / mo \\
+Labor Cost Reduced & 160 hours saved $\times$ \textnormal{\faInr} 150 per hour & \textnormal{\faInr} 24,000 / mo \\
 \addlinespace
-API Costs Avoided & 200 fallback queries rerouted from cloud LLM & Negligible \\
+API Costs Avoided & 640 fallback queries rerouted from cloud LLM & Negligible \\
 \bottomrule
 \end{tabularx}
 
@@ -108,13 +108,13 @@ API Costs Avoided & 200 fallback queries rerouted from cloud LLM & Negligible \\
 \end{tikzpicture}
 \vspace{1mm}
 
-\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash\bfseries}p{4cm} X >{\raggedright\arraybackslash\bfseries}p{3cm}}
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash\bfseries}p{4cm} X >{\raggedright\arraybackslash\bfseries}p{3.2cm}}
 \toprule
 Metric & \normalfont\textbf{Calculation Logic} & Impact \\
 \midrule
-Churn Events Prevented & 200 local resolutions $\times$ 20\% risk of churn if left unanswered & 40 Users Retained \\
+Churn Events Prevented & 640 local resolutions $\times$ 20\% risk of churn if left unanswered & 128 Users Retained \\
 \addlinespace
-Monthly Revenue Protected & 40 retained users $\times$ \textnormal{\faInr} 50 ARPU & \textnormal{\faInr} 2,000 / mo \\
+Monthly Revenue Protected & 128 retained users $\times$ \textnormal{\faInr} 50 ARPU & \textnormal{\faInr} 6,400 / mo \\
 \bottomrule
 \end{tabularx}
 
@@ -131,17 +131,18 @@ Monthly Revenue Protected & 40 retained users $\times$ \textnormal{\faInr} 50 AR
 \begin{tikzpicture}
   \node[metricbox, draw=vibrantamber] (monthly) at (0,0) {
     \textcolor{brandslate}{\textbf{Total Monthly Impact}}\\[1.5mm]
-    {\Large\bfseries \textnormal{\faInr} 8,000}
+    {\Large\bfseries \textnormal{\faInr} 30,400}
   };
   
   \node[metricbox, draw=vibrantgreen] (annual) at (5.5,0) {
     \textcolor{brandslate}{\textbf{Projected Annual ROI}}\\[1.5mm]
-    {\Large\bfseries \textnormal{\faInr} 96,000}
+    {\Large\bfseries \textnormal{\faInr} 364,800}
   };
 
   \node[metricbox, draw=brandblue] (capacity) at (11,0) {
     \textcolor{brandslate}{\textbf{Support Capacity Freed}}\\[1.5mm]
-    {\Large\bfseries 480 Hours/yr}
+    {\Large\bfseries 1,920 Hours/yr}\\[0.5mm]
+    {\scriptsize (~1 Full-Time Agent)}
   };
 \end{tikzpicture}
 }
