@@ -194,7 +194,8 @@ export default function ChatScreen() {
             if (Platform.OS !== "web") {
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             }
-          }
+          },
+          language.code   // ← pass selected language so response is translated
         );
       } catch {
         updateMessage(id, aiMsgId, {
@@ -204,7 +205,7 @@ export default function ChatScreen() {
         setIsTyping(false);
       }
     },
-    [id, isTyping, addMessage, updateMessage, t]
+    [id, isTyping, addMessage, updateMessage, t, language.code]
   );
 
   // ── Voice button handler ───────────────────────────────────────────────────

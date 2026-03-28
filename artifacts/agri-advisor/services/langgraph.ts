@@ -11,6 +11,11 @@
  *   Node 6 — Synthesis    → Llama-3-70B
  *
  * Falls back gracefully if backend is unreachable.
+ *
+ * Translation layer (client-side):
+ *   Primary  → MyMemory API   (free, no key, 1000 req/day)
+ *   Fallback → LibreTranslate (free public instance)
+ *   Strategy → chunk by paragraph so each request stays under 500 chars
  */
 
 import { AgentStep } from "@/context/ChatContext";
@@ -29,6 +34,45 @@ const AGMARKNET_API_KEY =
 
 const AGMARKNET_URL =
   "https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070";
+
+// Public LibreTranslate instances — tried in order if MyMemory fails
+const LIBRE_TRANSLATE_URLS = [
+  "https://libretranslate.com/translate",
+  "https://translate.argosopentech.com/translate",
+  "https://libretranslate.de/translate",
+];
+
+// ─── Language code maps ───────────────────────────────────────────────────────
+
+// MyMemory uses IETF tags like "hi-IN"
+const MYMEMORY_LANG_MAP: Record<string, string> = {
+  hi: "hi-IN",
+  bn: "bn-IN",
+  te: "te-IN",
+  mr: "mr-IN",
+  ta: "ta-IN",
+  gu: "gu-IN",
+  kn: "kn-IN",
+  ml: "ml-IN",
+  pa: "pa-IN",
+  or: "or-IN",
+  ur: "ur-PK",
+};
+
+// LibreTranslate uses ISO 639-1 codes
+const LIBRE_LANG_MAP: Record<string, string> = {
+  hi: "hi",
+  bn: "bn",
+  te: "te",
+  mr: "mr",
+  ta: "ta",
+  gu: "gu",
+  kn: "kn",
+  ml: "ml",
+  pa: "pa",
+  or: "or",
+  ur: "ur",
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -52,47 +96,335 @@ type PipelineResult = {
   guardrails_message: string;
 };
 
+// ─── Translation helpers ──────────────────────────────────────────────────────
+
+/**
+ * Translate a single short string via MyMemory (primary).
+ * Returns null on failure so caller can try the fallback.
+ */
+async function translateWithMyMemory(
+  text: string,
+  targetLang: string
+): Promise<string | null> {
+  try {
+    const tag = MYMEMORY_LANG_MAP[targetLang] ?? targetLang;
+    const url =
+      `https://api.mymemory.translated.net/get` +
+      `?q=${encodeURIComponent(text)}&langpair=en|${tag}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data?.responseStatus === 200 && data?.responseData?.translatedText) {
+      return data.responseData.translatedText as string;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Translate a single short string via LibreTranslate (fallback).
+ * Tries each public instance until one succeeds.
+ * Returns null if all instances fail.
+ */
+async function translateWithLibreTranslate(
+  text: string,
+  targetLang: string
+): Promise<string | null> {
+  const lang = LIBRE_LANG_MAP[targetLang] ?? targetLang;
+  for (const baseUrl of LIBRE_TRANSLATE_URLS) {
+    try {
+      const res = await fetch(baseUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ q: text, source: "en", target: lang, format: "text" }),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (data?.translatedText) return data.translatedText as string;
+    } catch {
+      // try next instance
+    }
+  }
+  return null;
+}
+
+/**
+ * Translate one chunk with MyMemory first, LibreTranslate as fallback.
+ * Returns original text if both fail.
+ */
+async function translateChunk(chunk: string, targetLang: string): Promise<string> {
+  const mm = await translateWithMyMemory(chunk, targetLang);
+  if (mm) return mm;
+  const lt = await translateWithLibreTranslate(chunk, targetLang);
+  if (lt) return lt;
+  return chunk; // both failed — keep English
+}
+
+/**
+ * Split markdown text into paragraph-sized chunks (≤ 480 chars each),
+ * translate each one, then rejoin preserving the original separators.
+ *
+ * Split strategy:
+ *   1. Split on double-newline (paragraph boundary).
+ *   2. If a paragraph is still > 480 chars, split further on single newlines.
+ *   3. If a line is still > 480 chars, split on ". " sentence boundaries.
+ */
+async function translateFullResponse(
+  text: string,
+  targetLang: string
+): Promise<string> {
+  const MAX = 480;
+
+  // First-pass split: paragraph blocks
+  const paragraphs = text.split(/\n\n/);
+
+  const chunks: { text: string; sep: string }[] = [];
+
+  for (const para of paragraphs) {
+    if (para.length <= MAX) {
+      chunks.push({ text: para, sep: "\n\n" });
+      continue;
+    }
+    // Split paragraph into lines
+    const lines = para.split(/\n/);
+    for (const line of lines) {
+      if (line.length <= MAX) {
+        chunks.push({ text: line, sep: "\n" });
+        continue;
+      }
+      // Split long line on sentence boundaries
+      const sentences = line.split(/(?<=\. )/);
+      let current = "";
+      for (const sentence of sentences) {
+        if ((current + sentence).length <= MAX) {
+          current += sentence;
+        } else {
+          if (current) chunks.push({ text: current.trim(), sep: " " });
+          current = sentence;
+        }
+      }
+      if (current) chunks.push({ text: current.trim(), sep: "\n" });
+    }
+  }
+
+  // Translate all chunks in parallel (batched to avoid hammering the API)
+  const BATCH = 5;
+  const translated: string[] = new Array(chunks.length);
+
+  for (let i = 0; i < chunks.length; i += BATCH) {
+    const batch = chunks.slice(i, i + BATCH);
+    const results = await Promise.all(
+      batch.map((c) =>
+        // Skip translation for lines that are purely markdown syntax or numbers
+        /^[|#*\-_`>\s\d₹.,:/\\[\]()!@%^&*+=]+$/.test(c.text)
+          ? Promise.resolve(c.text)
+          : translateChunk(c.text, targetLang)
+      )
+    );
+    results.forEach((r, j) => { translated[i + j] = r; });
+  }
+
+  // Rejoin using separators
+  let result = "";
+  for (let i = 0; i < chunks.length; i++) {
+    result += translated[i];
+    if (i < chunks.length - 1) result += chunks[i].sep;
+  }
+  return result;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * Extracts commodity from query — supports English and all major Indian
+ * language names for common crops.
+ */
 function extractCommodity(query: string): string | null {
-  const commodities = [
-    "mango", "wheat", "rice", "cotton", "maize", "soybean",
-    "tomato", "onion", "potato", "apple", "banana", "grapes",
-    "sugarcane", "mustard", "groundnut", "bajra", "jowar",
-  ];
+  // Map of keyword → canonical English name
+  // English first, then Hindi, then other scripts
+  const commodityMap: Record<string, string> = {
+    // Wheat
+    wheat: "wheat", "गेहूं": "wheat", "गेहूँ": "wheat", "गेहू": "wheat",
+    // Rice
+    rice: "rice", "चावल": "rice", "धान": "rice", "पधान": "rice",
+    // Cotton
+    cotton: "cotton", "कपास": "cotton",
+    // Maize
+    maize: "maize", corn: "maize", "मक्का": "maize", "मकई": "maize",
+    // Soybean
+    soybean: "soybean", soya: "soybean", "सोयाबीन": "soybean",
+    // Tomato
+    tomato: "tomato", "टमाटर": "tomato",
+    // Onion
+    onion: "onion", "प्याज": "onion", "प्याजा": "onion",
+    // Potato
+    potato: "potato", "आलू": "potato",
+    // Mustard
+    mustard: "mustard", "सरसों": "mustard", "राई": "mustard",
+    // Groundnut
+    groundnut: "groundnut", peanut: "groundnut", "मूंगफली": "groundnut",
+    // Sugarcane
+    sugarcane: "sugarcane", "गन्ना": "sugarcane", "ईख": "sugarcane",
+    // Bajra
+    bajra: "bajra", "बाजरा": "bajra",
+    // Jowar
+    jowar: "jowar", "ज्वार": "jowar",
+    // Mango
+    mango: "mango", "आम": "mango",
+    // Banana
+    banana: "banana", "केला": "banana",
+    // Apple
+    apple: "apple", "सेब": "apple",
+    // Grapes
+    grapes: "grapes", grape: "grapes", "अंगूर": "grapes",
+    // Chilli
+    chilli: "chilli", chili: "chilli", "मिर्च": "chilli",
+    // Turmeric
+    turmeric: "turmeric", "हल्दी": "turmeric",
+    // Coriander
+    coriander: "coriander", "धनिया": "coriander",
+  };
+
   const lower = query.toLowerCase();
-  for (const c of commodities) {
-    if (lower.includes(c)) return c;
+
+  // Check Hindi/Unicode entries first (exact substring match on original query)
+  for (const [keyword, canonical] of Object.entries(commodityMap)) {
+    // For non-ASCII keywords, check original query directly (case doesn't matter)
+    if (/[^\u0000-\u007F]/.test(keyword)) {
+      if (query.includes(keyword)) return canonical;
+    } else {
+      if (lower.includes(keyword)) return canonical;
+    }
   }
   return null;
 }
 
+/**
+ * Extracts location from query — supports English and Hindi state/city names.
+ */
 function extractLocation(query: string): string | null {
-  const locations = [
-    "punjab", "haryana", "uttar pradesh", "up", "madhya pradesh", "mp",
-    "rajasthan", "gujarat", "maharashtra", "karnataka", "telangana",
-    "andhra pradesh", "tamil nadu", "west bengal", "bihar", "delhi",
-    "odisha", "chhattisgarh", "jharkhand", "himachal", "uttarakhand",
-    "pune", "mumbai", "nashik", "nagpur", "hyderabad", "bangalore",
-    "lucknow", "jaipur", "chandigarh", "amritsar", "ludhiana",
+  // [Hindi name, English canonical] pairs
+  const locationMap: [string, string][] = [
+    // States — Hindi
+    ["पंजाब", "punjab"],
+    ["हरियाणा", "haryana"],
+    ["उत्तर प्रदेश", "uttar pradesh"],
+    ["मध्य प्रदेश", "madhya pradesh"],
+    ["राजस्थान", "rajasthan"],
+    ["गुजरात", "gujarat"],
+    ["महाराष्ट्र", "maharashtra"],
+    ["कर्नाटक", "karnataka"],
+    ["तेलंगाना", "telangana"],
+    ["आंध्र प्रदेश", "andhra pradesh"],
+    ["तमिल नाडु", "tamil nadu"],
+    ["पश्चिम बंगाल", "west bengal"],
+    ["बिहार", "bihar"],
+    ["दिल्ली", "delhi"],
+    ["ओडिशा", "odisha"],
+    ["छत्तीसगढ़", "chhattisgarh"],
+    ["झारखंड", "jharkhand"],
+    ["हिमाचल", "himachal"],
+    ["उत्तराखंड", "uttarakhand"],
+    // Cities — Hindi
+    ["पुणे", "pune"],
+    ["मुंबई", "mumbai"],
+    ["नाशिक", "nashik"],
+    ["नागपुर", "nagpur"],
+    ["हैदराबाद", "hyderabad"],
+    ["बैंगलोर", "bangalore"],
+    ["लखनऊ", "lucknow"],
+    ["जयपुर", "jaipur"],
+    ["चंडीगढ़", "chandigarh"],
+    ["अमृतसर", "amritsar"],
+    ["लुधियाना", "ludhiana"],
+    ["भोपाल", "bhopal"],
+    ["इंदौर", "indore"],
+    ["आगरा", "agra"],
+    ["वाराणसी", "varanasi"],
+    // States — English (original list)
+    ["punjab", "punjab"],
+    ["haryana", "haryana"],
+    ["uttar pradesh", "uttar pradesh"],
+    ["up", "uttar pradesh"],
+    ["madhya pradesh", "madhya pradesh"],
+    ["mp", "madhya pradesh"],
+    ["rajasthan", "rajasthan"],
+    ["gujarat", "gujarat"],
+    ["maharashtra", "maharashtra"],
+    ["karnataka", "karnataka"],
+    ["telangana", "telangana"],
+    ["andhra pradesh", "andhra pradesh"],
+    ["tamil nadu", "tamil nadu"],
+    ["west bengal", "west bengal"],
+    ["bihar", "bihar"],
+    ["delhi", "delhi"],
+    ["odisha", "odisha"],
+    ["chhattisgarh", "chhattisgarh"],
+    ["jharkhand", "jharkhand"],
+    ["himachal", "himachal"],
+    ["uttarakhand", "uttarakhand"],
+    ["pune", "pune"],
+    ["mumbai", "mumbai"],
+    ["nashik", "nashik"],
+    ["nagpur", "nagpur"],
+    ["hyderabad", "hyderabad"],
+    ["bangalore", "bangalore"],
+    ["lucknow", "lucknow"],
+    ["jaipur", "jaipur"],
+    ["chandigarh", "chandigarh"],
+    ["amritsar", "amritsar"],
+    ["ludhiana", "ludhiana"],
   ];
+
   const lower = query.toLowerCase();
-  for (const loc of locations) {
-    if (lower.includes(loc)) return loc;
+
+  for (const [keyword, canonical] of locationMap) {
+    if (/[^\u0000-\u007F]/.test(keyword)) {
+      if (query.includes(keyword)) return canonical;
+    } else {
+      if (lower.includes(keyword)) return canonical;
+    }
   }
   return null;
 }
 
+/**
+ * Classifies query intent — supports English and Hindi keywords.
+ */
 function classifyIntent(query: string): string {
   const lower = query.toLowerCase();
-  if (lower.match(/price|mandi|market|msp|rate|sell|quintal|bazaar|bhav/))
+
+  // Market — English + Hindi (भाव=price, मंडी=mandi, बेचना=sell, दाम=rate)
+  if (
+    lower.match(/price|mandi|market|msp|rate|sell|quintal|bazaar|bhav/) ||
+    /भाव|मंडी|दाम|बेचना|बिकना|कीमत|बाजार|क्विंटल|मूल्य/.test(query)
+  )
     return "market";
-  if (lower.match(/weather|rain|rainfall|temperature|forecast|humid|wind|cloud|storm/))
+
+  // Weather — English + Hindi (बारिश=rain, मौसम=weather, तापमान=temperature)
+  if (
+    lower.match(/weather|rain|rainfall|temperature|forecast|humid|wind|cloud|storm/) ||
+    /बारिश|मौसम|तापमान|बाढ़|आंधी|हवा|बादल|ओले|पूर्वानुमान|वर्षा/.test(query)
+  )
     return "weather";
-  if (lower.match(/pest|disease|insect|fungus|blight|wilt|virus|spray|pesticide/))
+
+  // Pest — English + Hindi (कीट=pest, रोग=disease, फफूंद=fungus)
+  if (
+    lower.match(/pest|disease|insect|fungus|blight|wilt|virus|spray|pesticide/) ||
+    /कीट|रोग|फफूंद|कीड़ा|झुलसा|विषाणु|दवाई|छिड़काव|नाशक/.test(query)
+  )
     return "pest";
-  if (lower.match(/scheme|subsidy|kisan|yojana|government|loan|credit|insurance/))
+
+  // Scheme — English + Hindi (योजना=scheme, सब्सिडी=subsidy, लोन=loan)
+  if (
+    lower.match(/scheme|subsidy|kisan|yojana|government|loan|credit|insurance/) ||
+    /योजना|सब्सिडी|किसान|सरकार|लोन|बीमा|क्रेडिट|अनुदान/.test(query)
+  )
     return "scheme";
+
   return "general";
 }
 
@@ -104,21 +436,19 @@ function formatIndianNumber(n: number): string {
 
 async function fetchLiveWeather(location: string): Promise<any> {
   try {
-    // Step 1: Geocode the location
     const geoRes = await fetch(
       `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(location)}&count=1&language=en&format=json`
     );
     const geoData = await geoRes.json();
 
     let lat = 20.5937;
-    let lon = 78.9629; // default: India center
+    let lon = 78.9629;
 
     if (geoData.results && geoData.results.length > 0) {
       lat = geoData.results[0].latitude;
       lon = geoData.results[0].longitude;
     }
 
-    // Step 2: Fetch 7-day forecast
     const weatherRes = await fetch(
       `https://api.open-meteo.com/v1/forecast` +
         `?latitude=${lat}&longitude=${lon}` +
@@ -175,7 +505,6 @@ async function fetchLiveMarketData(commodity: string, location: string | null): 
 
     if (!data.records || data.records.length === 0) return null;
 
-    // Filter by location if provided
     let records = data.records;
     if (location) {
       const locLower = location.toLowerCase();
@@ -203,7 +532,9 @@ async function fetchLiveMarketData(commodity: string, location: string | null): 
 
     if (prices.length === 0) return null;
 
-    const avg = Math.round(prices.reduce((s: number, p: any) => s + p.modal_price, 0) / prices.length);
+    const avg = Math.round(
+      prices.reduce((s: number, p: any) => s + p.modal_price, 0) / prices.length
+    );
 
     return {
       source: "AGMARKNET (Live — data.gov.in)",
@@ -234,7 +565,7 @@ const MSP_2024_25: Record<string, { msp: number; unit: string; grade: string }> 
   sugarcane: { msp: 340,  unit: "quintal", grade: "FRP" },
 };
 
-// ─── Backend Pipeline Call (calls Python LangGraph + Ollama LLMs) ──────────────
+// ─── Backend Pipeline Call ─────────────────────────────────────────────────────
 
 async function callBackendPipeline(
   query: string,
@@ -256,9 +587,13 @@ async function callBackendPipeline(
   }
 }
 
-// ─── Response Generators (client-side fallback when backend is down) ───────────
+// ─── Response Generators ───────────────────────────────────────────────────────
 
-function buildWeatherResponse(weatherData: any, commodity: string | null, location: string | null): string {
+function buildWeatherResponse(
+  weatherData: any,
+  commodity: string | null,
+  location: string | null
+): string {
   if (!weatherData) {
     return [
       "## Weather update",
@@ -274,7 +609,9 @@ function buildWeatherResponse(weatherData: any, commodity: string | null, locati
 
   const today = weatherData.forecast[0];
   const rainDays = weatherData.forecast.filter((d: any) => d.rain_mm > 5);
-  const placeName = location ? location.charAt(0).toUpperCase() + location.slice(1) : "your region";
+  const placeName = location
+    ? location.charAt(0).toUpperCase() + location.slice(1)
+    : "your region";
   const totalRain = rainDays.reduce((sum: number, day: any) => sum + day.rain_mm, 0);
   const wettestDay = weatherData.forecast.reduce(
     (wettest: any, day: any) => (day.rain_mm > wettest.rain_mm ? day : wettest),
@@ -322,7 +659,9 @@ function buildWeatherResponse(weatherData: any, commodity: string | null, locati
         : index === 1
           ? "Tomorrow"
           : new Date(day.date).toLocaleDateString("en-IN", { weekday: "short" });
-    lines.push(`| ${label} | ${day.description} | ${day.max} | ${day.min} | ${day.rain_mm} | ${day.wind_kmh} |`);
+    lines.push(
+      `| ${label} | ${day.description} | ${day.max} | ${day.min} | ${day.rain_mm} | ${day.wind_kmh} |`
+    );
   });
 
   lines.push("", "### What to do");
@@ -359,88 +698,139 @@ function buildMarketResponse(
   location: string | null
 ): string {
   const msp = MSP_2024_25[commodity];
-  let md = `## 📊 ${commodity.charAt(0).toUpperCase() + commodity.slice(1)} Market Update\n\n`;
+  let md = `## ${commodity.charAt(0).toUpperCase() + commodity.slice(1)} Market Update\n\n`;
 
   if (msp) {
-    md += `**MSP 2024-25:** ₹${formatIndianNumber(msp.msp)}/${msp.unit} (${msp.grade})\n\n`;
+    md += `**MSP 2024-25:** Rs.${formatIndianNumber(msp.msp)}/${msp.unit} (${msp.grade})\n\n`;
   }
 
   if (liveData && liveData.prices.length > 0) {
-    md += `### 🟢 Live AGMARKNET Data\n`;
-    md += `*Source: ${liveData.source} · ${liveData.record_count ?? ""} records found*\n\n`;
+    md += `### Live AGMARKNET Data\n`;
+    md += `Source: ${liveData.source} - ${liveData.record_count ?? ""} records found\n\n`;
     md += `| Market | State | Modal Price | Min | Max |\n`;
     md += `|--------|-------|------------|-----|-----|\n`;
 
     liveData.prices.forEach((p: any) => {
-      md += `| ${p.market} | ${p.state} | ₹${formatIndianNumber(p.modal_price)} | ₹${formatIndianNumber(p.min_price)} | ₹${formatIndianNumber(p.max_price)} |\n`;
+      md += `| ${p.market} | ${p.state} | Rs.${formatIndianNumber(p.modal_price)} | Rs.${formatIndianNumber(p.min_price)} | Rs.${formatIndianNumber(p.max_price)} |\n`;
     });
 
     if (liveData.avg_modal_price && msp) {
       const premium = (((liveData.avg_modal_price - msp.msp) / msp.msp) * 100).toFixed(1);
       const premiumNum = parseFloat(premium);
-      md += `\n**Average Modal Price:** ₹${formatIndianNumber(liveData.avg_modal_price)}/quintal`;
+      md += `\n**Average Modal Price:** Rs.${formatIndianNumber(liveData.avg_modal_price)}/quintal`;
       md += ` (${premiumNum >= 0 ? "+" : ""}${premium}% vs MSP)\n\n`;
       if (premiumNum > 10) {
-        md += `✅ **Excellent time to sell** — prices significantly above support price.\n`;
+        md += `Excellent time to sell - prices significantly above support price.\n`;
       } else if (premiumNum > 5) {
-        md += `✅ **Good prices** — consider selling if storage costs are high.\n`;
+        md += `Good prices - consider selling if storage costs are high.\n`;
       } else if (premiumNum >= 0) {
-        md += `⚠️ **Near MSP levels** — hold if storage is available and costs permit.\n`;
+        md += `Near MSP levels - hold if storage is available and costs permit.\n`;
       } else {
-        md += `🔴 **Below MSP** — contact nearest FCI/state procurement agency immediately.\n`;
+        md += `Below MSP - contact nearest FCI/state procurement agency immediately.\n`;
       }
     }
   } else {
-    md += `### ⚠️ Live Data Unavailable\n`;
+    md += `### Live Data Unavailable\n`;
     md += `AGMARKNET API returned no records for "${commodity}"${location ? ` in ${location}` : ""}.\n`;
-    md += `Check [agmarknet.gov.in](https://agmarknet.gov.in) or the eNAM app for latest rates.\n\n`;
+    md += `Check agmarknet.gov.in or the eNAM app for latest rates.\n\n`;
 
     if (msp) {
-      md += `**Reference MSP:** ₹${formatIndianNumber(msp.msp)}/quintal\n`;
+      md += `**Reference MSP:** Rs.${formatIndianNumber(msp.msp)}/quintal\n`;
     }
   }
 
-  md += `\n### 💡 Action Steps\n`;
+  md += `\n### Action Steps\n`;
   md += `1. **Sell strategy:** Compare at least 3 nearby mandis before deciding\n`;
-  md += `2. **Transport:** Factor transport costs (₹50-150/quintal) into your net price\n`;
+  md += `2. **Transport:** Factor transport costs (Rs.50-150/quintal) into your net price\n`;
   md += `3. **Government procurement:** Contact FCI or state agency if mandi price < MSP\n`;
-  md += `4. **Live rates:** [agmarknet.gov.in](https://agmarknet.gov.in) · eNAM app\n`;
+  md += `4. **Live rates:** agmarknet.gov.in or eNAM app\n`;
 
-  if (liveData) md += `\n*📡 Source: AGMARKNET data.gov.in (live)*`;
+  if (liveData) md += `\nSource: AGMARKNET data.gov.in (live)`;
   return md;
 }
 
-function buildPestResponse(query: string, commodity: string | null, location: string | null): string {
-  const cropName = commodity ? commodity.charAt(0).toUpperCase() + commodity.slice(1) : "Crop";
-  let md = `## 🔬 Pest & Disease Advisory\n\n`;
+function buildPestResponse(
+  query: string,
+  commodity: string | null,
+  location: string | null
+): string {
+  const cropName = commodity
+    ? commodity.charAt(0).toUpperCase() + commodity.slice(1)
+    : "Crop";
+  let md = `## Pest and Disease Advisory\n\n`;
 
   if (commodity) {
     const pestDB: Record<string, { pests: string[]; symptoms: string[]; treatment: string[] }> = {
       wheat: {
         pests: ["Yellow Rust (Puccinia striiformis)", "Brown Rust", "Powdery Mildew", "Aphids"],
-        symptoms: ["Yellow/orange stripes on leaves", "Brown pustules on leaves", "White powdery coating", "Curling leaves, sticky residue"],
-        treatment: ["Propiconazole 25 EC @ 0.1%", "Tebuconazole 250 EW @ 0.1%", "Sulphur 80 WP @ 0.2%", "Imidacloprid 17.8 SL @ 0.05%"],
+        symptoms: [
+          "Yellow/orange stripes on leaves",
+          "Brown pustules on leaves",
+          "White powdery coating",
+          "Curling leaves, sticky residue",
+        ],
+        treatment: [
+          "Propiconazole 25 EC @ 0.1%",
+          "Tebuconazole 250 EW @ 0.1%",
+          "Sulphur 80 WP @ 0.2%",
+          "Imidacloprid 17.8 SL @ 0.05%",
+        ],
       },
       rice: {
-        pests: ["Brown Plant Hopper (BPH)", "Blast (Magnaporthe oryzae)", "Sheath Blight", "Leaf Folder"],
-        symptoms: ["Circular burnt patches (hopper burn)", "Diamond-shaped lesions on leaves", "Oval lesions on sheath", "Folded leaves with frass"],
-        treatment: ["Buprofezin 25 SC @ 0.0125%", "Tricyclazole 75 WP @ 0.06%", "Hexaconazole 5 EC @ 0.1%", "Chlorpyrifos 20 EC @ 0.05%"],
+        pests: [
+          "Brown Plant Hopper (BPH)",
+          "Blast (Magnaporthe oryzae)",
+          "Sheath Blight",
+          "Leaf Folder",
+        ],
+        symptoms: [
+          "Circular burnt patches (hopper burn)",
+          "Diamond-shaped lesions on leaves",
+          "Oval lesions on sheath",
+          "Folded leaves with frass",
+        ],
+        treatment: [
+          "Buprofezin 25 SC @ 0.0125%",
+          "Tricyclazole 75 WP @ 0.06%",
+          "Hexaconazole 5 EC @ 0.1%",
+          "Chlorpyrifos 20 EC @ 0.05%",
+        ],
       },
       cotton: {
         pests: ["Pink Bollworm", "Whitefly", "Thrips", "Mealybug"],
-        symptoms: ["Entry holes in bolls", "Yellowing, virus vector", "Silver-grey leaf surface", "White cottony masses"],
-        treatment: ["Emamectin benzoate 5 SG @ 0.002%", "Pyriproxyfen 10 EC @ 0.05%", "Spinosad 45 SC @ 0.03%", "Profenofos 50 EC @ 0.05%"],
+        symptoms: [
+          "Entry holes in bolls",
+          "Yellowing, virus vector",
+          "Silver-grey leaf surface",
+          "White cottony masses",
+        ],
+        treatment: [
+          "Emamectin benzoate 5 SG @ 0.002%",
+          "Pyriproxyfen 10 EC @ 0.05%",
+          "Spinosad 45 SC @ 0.03%",
+          "Profenofos 50 EC @ 0.05%",
+        ],
       },
       tomato: {
         pests: ["Leaf Curl Virus (TLCV)", "Early Blight", "Late Blight", "Fruit Borer"],
-        symptoms: ["Upward leaf curl, mosaic", "Concentric brown rings on leaves", "Water-soaked dark lesions", "Entry holes in fruit"],
-        treatment: ["Control whitefly vector with Imidacloprid", "Mancozeb 75 WP @ 0.2%", "Metalaxyl-M + Mancozeb @ 0.25%", "Spinosad 45 SC @ 0.03%"],
+        symptoms: [
+          "Upward leaf curl, mosaic",
+          "Concentric brown rings on leaves",
+          "Water-soaked dark lesions",
+          "Entry holes in fruit",
+        ],
+        treatment: [
+          "Control whitefly vector with Imidacloprid",
+          "Mancozeb 75 WP @ 0.2%",
+          "Metalaxyl-M + Mancozeb @ 0.25%",
+          "Spinosad 45 SC @ 0.03%",
+        ],
       },
     };
 
     const info = pestDB[commodity];
     if (info) {
-      md += `### Common ${cropName} Pests & Diseases\n\n`;
+      md += `### Common ${cropName} Pests and Diseases\n\n`;
       info.pests.forEach((pest, i) => {
         md += `**${pest}**\n`;
         md += `- Symptoms: ${info.symptoms[i]}\n`;
@@ -449,32 +839,32 @@ function buildPestResponse(query: string, commodity: string | null, location: st
     }
   }
 
-  md += `### 🛡️ Integrated Pest Management (IPM) Principles\n`;
-  md += `1. **Scout regularly** — Check 20 plants randomly across your field weekly\n`;
-  md += `2. **Economic threshold** — Spray only when pest population crosses damage threshold\n`;
-  md += `3. **Biological control** — Release Trichogramma cards for egg parasitization\n`;
-  md += `4. **Crop rotation** — Break pest cycles by rotating with non-host crops\n`;
-  md += `5. **Spray timing** — Early morning (6-9 AM) or evening (4-7 PM) for best efficacy\n\n`;
+  md += `### Integrated Pest Management (IPM) Principles\n`;
+  md += `1. **Scout regularly** - Check 20 plants randomly across your field weekly\n`;
+  md += `2. **Economic threshold** - Spray only when pest population crosses damage threshold\n`;
+  md += `3. **Biological control** - Release Trichogramma cards for egg parasitization\n`;
+  md += `4. **Crop rotation** - Break pest cycles by rotating with non-host crops\n`;
+  md += `5. **Spray timing** - Early morning (6-9 AM) or evening (4-7 PM) for best efficacy\n\n`;
 
-  md += `### 📞 Expert Help\n`;
+  md += `### Expert Help\n`;
   md += `- **Kisan Call Centre:** 1800-180-1551 (free, 24x7)\n`;
   md += `- **State Agriculture Dept:** Contact local KVK (Krishi Vigyan Kendra)\n`;
   md += `- **ICAR advisory:** Share clear photos with your nearest agriculture officer\n`;
 
   if (location) {
-    md += `\n*📍 For region-specific alerts in ${location}, check the NCIPM pest surveillance portal.*`;
+    md += `\nFor region-specific alerts in ${location}, check the NCIPM pest surveillance portal.`;
   }
 
   return md;
 }
 
 function buildSchemeResponse(): string {
-  return `## 💰 Government Schemes for Farmers
+  return `## Government Schemes for Farmers
 
 ### PM-KISAN (Pradhan Mantri Kisan Samman Nidhi)
-- **Benefit:** ₹6,000/year in 3 installments of ₹2,000
+- **Benefit:** Rs.6,000/year in 3 installments of Rs.2,000
 - **Eligibility:** All landholding farmer families
-- **Apply:** [pmkisan.gov.in](https://pmkisan.gov.in) or nearest CSC
+- **Apply:** pmkisan.gov.in or nearest CSC
 - **Status check:** PM-KISAN app or 155261
 
 ### PMFBY (Pradhan Mantri Fasal Bima Yojana)
@@ -484,17 +874,17 @@ function buildSchemeResponse(): string {
 
 ### Kisan Credit Card (KCC)
 - **Rate:** 4% effective interest (7% with 3% GoI subvention)
-- **Limit:** Up to ₹3 lakh short-term credit
+- **Limit:** Up to Rs.3 lakh short-term credit
 - **Apply:** Nearest nationalized or cooperative bank
 
 ### PM Krishi Sinchai Yojana (PMKSY)
-- **Focus:** "Har Khet Ko Pani, More Crop Per Drop"
+- **Focus:** Har Khet Ko Pani, More Crop Per Drop
 - **Subsidy:** Up to 55% for drip/sprinkler irrigation (SC/ST 70%)
 - **Apply:** State agriculture department or PMKSY portal
 
 ### eNAM (National Agriculture Market)
 - **Benefit:** Access to pan-India transparent price discovery
-- **Platform:** enam.gov.in · eNAM mobile app
+- **Platform:** enam.gov.in or eNAM mobile app
 - **Registration:** Through nearest APMC mandi office
 
 ### Soil Health Card Scheme
@@ -504,24 +894,34 @@ function buildSchemeResponse(): string {
 
 ---
 
-### 📌 How to Apply
-1. Visit nearest **CSC (Common Service Centre)**
+### How to Apply
+1. Visit nearest CSC (Common Service Centre)
 2. Carry: Aadhaar card, land records (7/12 or Khasra), bank passbook
-3. Contact **Kisan Call Centre: 1800-180-1551** (free, 24x7)`;
+3. Contact Kisan Call Centre: 1800-180-1551 (free, 24x7)`;
 }
 
-function buildGeneralResponse(query: string, commodity: string | null, location: string | null): string {
-  const cropName = commodity ? commodity.charAt(0).toUpperCase() + commodity.slice(1) : null;
-  let md = `## 🌾 Agricultural Advisory\n\n`;
+function buildGeneralResponse(
+  query: string,
+  commodity: string | null,
+  location: string | null
+): string {
+  const cropName = commodity
+    ? commodity.charAt(0).toUpperCase() + commodity.slice(1)
+    : null;
+  let md = `## Agricultural Advisory\n\n`;
 
   if (cropName) {
     md += `### ${cropName} Farming Guide\n\n`;
     const cropGuides: Record<string, string> = {
-      wheat: "**Season:** Rabi (Oct-Nov sowing, Mar-Apr harvest)\n**Varieties:** HD-3086, PBW-343, GW-322\n**Spacing:** 20-22 cm rows\n**Water needs:** 4-6 irrigations (CRI, tillering, jointing, flowering, grain filling, dough stage)\n**Fertilizer:** 120:60:40 NPK kg/ha",
-      rice: "**Season:** Kharif (June-July transplant, Oct-Nov harvest)\n**Varieties:** MTU-1010, BPT-5204 (Samba Mahsuri), Pusa-44\n**Spacing:** 20x15 cm\n**Water needs:** Continuous flooding or SRI method\n**Fertilizer:** 100:50:50 NPK kg/ha in split doses",
-      cotton: "**Season:** Kharif (April-May sowing)\n**Varieties:** Bt Cotton hybrids (consult local APMC)\n**Spacing:** 90x60 cm\n**Irrigation:** 6-8 (critical at flowering and boll formation)\n**Fertilizer:** 180:80:80 NPK kg/ha",
-      maize: "**Season:** Kharif + Rabi both possible\n**Varieties:** Pioneer 30V92, DKC-9141\n**Spacing:** 60x25 cm\n**Irrigation:** 8-10 (tasseling and silking are critical)\n**Fertilizer:** 180:80:60 NPK kg/ha",
-      tomato: "**Season:** Year-round with varieties (avoid peak summer)\n**Varieties:** Arka Rakshak, Pusa Hybrid-4, local hybrids\n**Spacing:** 60x45 cm (staked), 90x60 cm (unstaked)\n**Irrigation:** Drip recommended, 5-7 mm/day\n**Fertilizer:** 200:100:200 NPK kg/ha + 25t FYM",
+      wheat:
+        "**Season:** Rabi (Oct-Nov sowing, Mar-Apr harvest)\n**Varieties:** HD-3086, PBW-343, GW-322\n**Spacing:** 20-22 cm rows\n**Water needs:** 4-6 irrigations\n**Fertilizer:** 120:60:40 NPK kg/ha",
+      rice: "**Season:** Kharif (June-July transplant, Oct-Nov harvest)\n**Varieties:** MTU-1010, BPT-5204, Pusa-44\n**Spacing:** 20x15 cm\n**Water needs:** Continuous flooding or SRI method\n**Fertilizer:** 100:50:50 NPK kg/ha in split doses",
+      cotton:
+        "**Season:** Kharif (April-May sowing)\n**Varieties:** Bt Cotton hybrids\n**Spacing:** 90x60 cm\n**Irrigation:** 6-8 (critical at flowering and boll formation)\n**Fertilizer:** 180:80:80 NPK kg/ha",
+      maize:
+        "**Season:** Kharif + Rabi both possible\n**Varieties:** Pioneer 30V92, DKC-9141\n**Spacing:** 60x25 cm\n**Irrigation:** 8-10 (tasseling and silking are critical)\n**Fertilizer:** 180:80:60 NPK kg/ha",
+      tomato:
+        "**Season:** Year-round with varieties\n**Varieties:** Arka Rakshak, Pusa Hybrid-4\n**Spacing:** 60x45 cm (staked)\n**Irrigation:** Drip recommended, 5-7 mm/day\n**Fertilizer:** 200:100:200 NPK kg/ha",
     };
     md += `${cropGuides[commodity ?? ""] ?? "Consult your local KVK (Krishi Vigyan Kendra) for variety and input recommendations specific to your district."}\n\n`;
   }
@@ -529,13 +929,13 @@ function buildGeneralResponse(query: string, commodity: string | null, location:
   md += `### Quick Recommendations\n`;
   md += `1. **Check weather** before any farm operation (spray, irrigate, harvest)\n`;
   md += `2. **Monitor mandi prices** across 3 nearby markets before selling\n`;
-  md += `3. **Soil testing** — get done every 3 years (free at govt labs)\n`;
-  md += `4. **Kisan Call Centre** — 1800-180-1551 (free, 24x7 expert advice)\n`;
+  md += `3. **Soil testing** - get done every 3 years (free at govt labs)\n`;
+  md += `4. **Kisan Call Centre** - 1800-180-1551 (free, 24x7 expert advice)\n`;
 
   if (location) {
-    md += `\n### 📍 Resources for ${location.charAt(0).toUpperCase() + location.slice(1)}\n`;
-    md += `- Contact your local **KVK (Krishi Vigyan Kendra)** for region-specific advice\n`;
-    md += `- **State Agriculture Department** website for local schemes and advisories\n`;
+    md += `\n### Resources for ${location.charAt(0).toUpperCase() + location.slice(1)}\n`;
+    md += `- Contact your local KVK (Krishi Vigyan Kendra) for region-specific advice\n`;
+    md += `- State Agriculture Department website for local schemes and advisories\n`;
   }
 
   return md;
@@ -553,12 +953,12 @@ function makeStep(
 }
 
 // ─── Main Export: runAgentQuery ────────────────────────────────────────────────
-// Called by [id].tsx chat screen
 
 export async function runAgentQuery(
   query: string,
   onStepUpdate: (steps: AgentStep[]) => void,
-  onComplete: (response: string, steps: AgentStep[]) => void
+  onComplete: (response: string, steps: AgentStep[]) => void,
+  languageCode: string = "en"   // ← NEW: language code from LanguageContext
 ): Promise<void> {
   const steps: AgentStep[] = [];
   const location = extractLocation(query) || "India";
@@ -567,29 +967,42 @@ export async function runAgentQuery(
 
   const update = (s: AgentStep[]) => onStepUpdate([...s]);
 
-  // ── Node 1: Guardrails (Llama-3-8B) ──────────────────────────────────────
+  // ── Node 1: Guardrails ────────────────────────────────────────────────────
   steps.push(makeStep("Guardrails", "running", "Checking query safety and domain relevance... (Llama-3-8B)"));
   update(steps);
   const t1 = Date.now();
 
-  // Try backend first (which uses Llama-3-8B via Ollama)
-  const backendResult = await callBackendPipeline(query, location);
+  // Pass language name to backend (e.g. "Hindi", "English")
+  const langNameMap: Record<string, string> = {
+    en: "English", hi: "Hindi", bn: "Bengali", te: "Telugu",
+    mr: "Marathi", ta: "Tamil", gu: "Gujarati", kn: "Kannada",
+    ml: "Malayalam", pa: "Punjabi", or: "Odia", ur: "Urdu",
+  };
+  const languageName = langNameMap[languageCode] ?? "English";
 
+  const backendResult = await callBackendPipeline(query, location, languageName);
   const d1 = Date.now() - t1;
 
   if (backendResult && !backendResult.is_safe) {
-    steps[0] = makeStep("Guardrails", "error", `⛔ ${backendResult.guardrails_message}`, d1);
+    steps[0] = makeStep("Guardrails", "error", `${backendResult.guardrails_message}`, d1);
     update(steps);
-    onComplete(backendResult.final_response || "This query is outside the agricultural domain. Please ask about farming, crops, weather, or market prices.", steps);
+    onComplete(
+      backendResult.final_response ||
+        "This query is outside the agricultural domain. Please ask about farming, crops, weather, or market prices.",
+      steps
+    );
     return;
   }
 
-  steps[0] = makeStep("Guardrails", "completed", "✓ Query validated — agricultural domain confirmed (Llama-3-8B)", d1);
+  steps[0] = makeStep(
+    "Guardrails", "completed",
+    "Query validated - agricultural domain confirmed (Llama-3-8B)",
+    d1
+  );
   update(steps);
 
   // If backend returned a full result, use it directly
   if (backendResult?.final_response) {
-    // Replay remaining nodes from audit log for UI
     const auditMap: Record<string, any> = {};
     (backendResult.audit_log || []).forEach((a) => { auditMap[a.node] = a; });
 
@@ -604,29 +1017,31 @@ export async function runAgentQuery(
       await new Promise((r) => setTimeout(r, Math.min(audit?.duration_ms ?? 400, 600)));
       steps[steps.length - 1] = makeStep(
         name, "completed",
-        `✓ ${audit?.message ?? `${name} completed`} (${models[i]})`,
+        `${audit?.message ?? `${name} completed`} (${models[i]})`,
         audit?.duration_ms ?? 400
       );
       update(steps);
     }
 
+    // Backend already handles language — no client-side translation needed
     onComplete(backendResult.final_response, steps);
     return;
   }
 
   // ── Backend unreachable — run client-side pipeline ────────────────────────
-  // Node 2: Intent (Mistral-7B — simulated client-side)
+
+  // Node 2: Intent
   steps.push(makeStep("Intent", "running", "Analyzing query intent and extracting entities... (Mistral-7B)"));
   update(steps);
   await new Promise((r) => setTimeout(r, 350));
   steps[steps.length - 1] = makeStep(
     "Intent", "completed",
-    `✓ Intent: ${intentType}${commodity ? ` | Crop: ${commodity}` : ""}${location !== "India" ? ` | Location: ${location}` : ""} (Mistral-7B)`,
+    `Intent: ${intentType}${commodity ? ` | Crop: ${commodity}` : ""}${location !== "India" ? ` | Location: ${location}` : ""} (Mistral-7B)`,
     350
   );
   update(steps);
 
-  // Node 3: Web Search (Qwen-14B — client-side: fetch from open APIs)
+  // Node 3: Web Search / data fetch
   steps.push(makeStep("Web Search", "running", "Searching live agricultural data sources... (Qwen-14B)"));
   update(steps);
   const t3 = Date.now();
@@ -634,7 +1049,6 @@ export async function runAgentQuery(
   let weatherData: any = null;
   let marketData: any = null;
 
-  // Parallel fetch
   const [weather, market] = await Promise.allSettled([
     intentType === "weather" || intentType === "general"
       ? fetchLiveWeather(location)
@@ -650,7 +1064,7 @@ export async function runAgentQuery(
   const d3 = Date.now() - t3;
   steps[steps.length - 1] = makeStep(
     "Web Search", "completed",
-    `✓ Retrieved live data from ${weatherData ? "Open-Meteo" : ""}${weatherData && marketData ? " + " : ""}${marketData ? "AGMARKNET" : ""} (Qwen-14B)`,
+    `Retrieved live data from ${weatherData ? "Open-Meteo" : ""}${weatherData && marketData ? " + " : ""}${marketData ? "AGMARKNET" : "open sources"} (Qwen-14B)`,
     d3
   );
   update(steps);
@@ -661,7 +1075,7 @@ export async function runAgentQuery(
     intentType === "weather" ? "running" : "completed",
     intentType === "weather"
       ? `Fetching 7-day forecast for ${location}... (Open-Meteo)`
-      : `✓ Weather context loaded (Open-Meteo)`,
+      : `Weather context loaded (Open-Meteo)`,
     intentType !== "weather" ? 50 : undefined
   ));
   update(steps);
@@ -671,8 +1085,8 @@ export async function runAgentQuery(
     steps[steps.length - 1] = makeStep(
       "Weather", "completed",
       weatherData
-        ? `✓ Live 7-day forecast for ${location}: ${weatherData.current_temp}°C (Open-Meteo)`
-        : "✓ Weather fallback used — API timeout",
+        ? `Live 7-day forecast for ${location}: ${weatherData.current_temp}C (Open-Meteo)`
+        : "Weather fallback used - API timeout",
       200
     );
     update(steps);
@@ -684,7 +1098,7 @@ export async function runAgentQuery(
     intentType === "market" ? "running" : "completed",
     intentType === "market"
       ? `Fetching live mandi prices for ${commodity || "crop"}... (AGMARKNET)`
-      : `✓ Market context loaded (AGMARKNET)`,
+      : `Market context loaded (AGMARKNET)`,
     intentType !== "market" ? 50 : undefined
   ));
   update(steps);
@@ -694,14 +1108,14 @@ export async function runAgentQuery(
     steps[steps.length - 1] = makeStep(
       "Market", "completed",
       marketData
-        ? `✓ Live AGMARKNET data: ${marketData.prices.length} mandi records found`
-        : `✓ MSP reference data used — AGMARKNET returned no live records`,
+        ? `Live AGMARKNET data: ${marketData.prices.length} mandi records found`
+        : `MSP reference data used - AGMARKNET returned no live records`,
       300
     );
     update(steps);
   }
 
-  // Node 6: Synthesis (Llama-3-70B — client-side structured response)
+  // Node 6: Synthesis
   steps.push(makeStep("Synthesis", "running", "Synthesizing comprehensive advisory response... (Llama-3-70B)"));
   update(steps);
   const t6 = Date.now();
@@ -709,24 +1123,62 @@ export async function runAgentQuery(
   let finalResponse = "";
   switch (intentType) {
     case "weather":
-      finalResponse = buildWeatherResponse(weatherData, commodity, location !== "India" ? location : null);
+      finalResponse = buildWeatherResponse(
+        weatherData, commodity, location !== "India" ? location : null
+      );
       break;
     case "market":
-      finalResponse = buildMarketResponse(marketData, commodity || "wheat", location !== "India" ? location : null);
+      finalResponse = buildMarketResponse(
+        marketData, commodity || "wheat", location !== "India" ? location : null
+      );
       break;
     case "pest":
-      finalResponse = buildPestResponse(query, commodity, location !== "India" ? location : null);
+      finalResponse = buildPestResponse(
+        query, commodity, location !== "India" ? location : null
+      );
       break;
     case "scheme":
       finalResponse = buildSchemeResponse();
       break;
     default:
-      finalResponse = buildGeneralResponse(query, commodity, location !== "India" ? location : null);
+      finalResponse = buildGeneralResponse(
+        query, commodity, location !== "India" ? location : null
+      );
   }
 
   const d6 = Date.now() - t6;
-  steps[steps.length - 1] = makeStep("Synthesis", "completed", "✓ Advisory response ready (Llama-3-70B)", d6);
+  steps[steps.length - 1] = makeStep(
+    "Synthesis", "completed", "Advisory response ready (Llama-3-70B)", d6
+  );
   update(steps);
+
+  // ── Translation layer (only when language is not English) ─────────────────
+  if (languageCode !== "en") {
+    // Add a translation step to the UI so the user knows what's happening
+    steps.push(makeStep(
+      "Translation", "running",
+      `Translating response to ${languageName}... (MyMemory + LibreTranslate)`
+    ));
+    update(steps);
+    const tTrans = Date.now();
+
+    try {
+      finalResponse = await translateFullResponse(finalResponse, languageCode);
+      steps[steps.length - 1] = makeStep(
+        "Translation", "completed",
+        `Response translated to ${languageName} (MyMemory + LibreTranslate)`,
+        Date.now() - tTrans
+      );
+    } catch (err) {
+      // Translation failed entirely — keep English, mark step as error
+      steps[steps.length - 1] = makeStep(
+        "Translation", "error",
+        `Translation to ${languageName} failed — showing English response`,
+        Date.now() - tTrans
+      );
+    }
+    update(steps);
+  }
 
   onComplete(finalResponse, steps);
 }
