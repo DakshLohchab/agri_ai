@@ -35,6 +35,7 @@ const AGMARKNET_URL =
 export type DemoScenarioKey =
   | "off_domain"
   | "ambiguous"
+  | "low_wifi"
   | "weather_rain"
   | "market_wheat"
   | "pest_alert"
@@ -259,46 +260,97 @@ async function callBackendPipeline(
 
 function buildWeatherResponse(weatherData: any, commodity: string | null, location: string | null): string {
   if (!weatherData) {
-    return `## 🌤️ Weather Advisory\n\nUnable to fetch live weather data right now. Please check [Open-Meteo](https://open-meteo.com) or your local weather app.\n\nFor farming decisions, always check 3-day forecasts before irrigation, spraying, or harvesting.`;
+    return [
+      "## Weather update",
+      "",
+      "I could not fetch live weather data right now.",
+      "Source check: Open-Meteo (https://open-meteo.com) or your local weather app before irrigation, spraying, or harvesting.",
+      "",
+      "### Best practice",
+      "- Recheck the next 3 days before any major field operation.",
+      "- Avoid spraying when rain or strong wind is likely.",
+    ].join("\n");
   }
 
   const today = weatherData.forecast[0];
   const rainDays = weatherData.forecast.filter((d: any) => d.rain_mm > 5);
+  const placeName = location ? location.charAt(0).toUpperCase() + location.slice(1) : "your region";
+  const totalRain = rainDays.reduce((sum: number, day: any) => sum + day.rain_mm, 0);
+  const wettestDay = weatherData.forecast.reduce(
+    (wettest: any, day: any) => (day.rain_mm > wettest.rain_mm ? day : wettest),
+    weatherData.forecast[0]
+  );
 
-  let md = `## 🌤️ Weather for ${location ? location.charAt(0).toUpperCase() + location.slice(1) : "Your Region"}\n\n`;
-  md += `**Current:** ${weatherData.current_temp}°C · ${today.description} · Wind ${weatherData.wind_speed} km/h\n\n`;
-  md += `### 7-Day Forecast\n\n`;
-  md += `| Day | Condition | High/Low | Rain | Wind |\n`;
-  md += `|-----|-----------|----------|------|------|\n`;
-
-  weatherData.forecast.forEach((d: any, i: number) => {
-    const label = i === 0 ? "**Today**" : i === 1 ? "Tomorrow" : new Date(d.date).toLocaleDateString("en-IN", { weekday: "short" });
-    md += `| ${label} | ${d.description} | ${d.max}°/${d.min}° | ${d.rain_mm}mm | ${d.wind_kmh} km/h |\n`;
-  });
+  const lines: string[] = [
+    `## Weather update for ${placeName}`,
+    "",
+    "### Weekly snapshot",
+    `Current: ${weatherData.current_temp} C`,
+    `Wind: ${weatherData.wind_speed} km/h`,
+  ];
 
   if (rainDays.length > 0) {
-    md += `\n### ⚠️ Rainfall Advisory\n`;
-    md += `Rain expected on **${rainDays.length} day(s)** this week (total ~${rainDays.reduce((s: number, d: any) => s + d.rain_mm, 0).toFixed(0)}mm).\n`;
-    md += `- Delay spraying and harvesting operations\n`;
-    md += `- Ensure drainage channels are clear\n`;
-    md += `- Protect sensitive crops with covers if rainfall >20mm forecast\n`;
+    const wettestLabel =
+      wettestDay.date === today.date
+        ? "today"
+        : new Date(wettestDay.date).toLocaleDateString("en-IN", { weekday: "long" });
+    lines.push(
+      `Rainy days: ${rainDays.length}`,
+      `Weekly rainfall: ${totalRain.toFixed(0)} mm`,
+      `Wettest spell: ${wettestLabel} (${wettestDay.rain_mm} mm)`,
+      "",
+      `Rain outlook: Rain is expected on ${rainDays.length} day(s) this week, with about ${totalRain.toFixed(0)} mm in total. The wettest spell looks likely on ${wettestLabel}.`
+    );
+  } else {
+    lines.push(
+      "Rainy days: 0",
+      "Weekly rainfall: 0 mm",
+      "Wettest spell: No meaningful rainfall expected",
+      "",
+      "Rain outlook: No major rainfall is expected this week."
+    );
+  }
+
+  lines.push("", "### 7-day forecast");
+  lines.push("| Day | Condition | Max C | Min C | Rain mm | Wind km/h |");
+  lines.push("|-----|-----------|-------|-------|---------|------------|");
+
+  weatherData.forecast.forEach((day: any, index: number) => {
+    const label =
+      index === 0
+        ? "Today"
+        : index === 1
+          ? "Tomorrow"
+          : new Date(day.date).toLocaleDateString("en-IN", { weekday: "short" });
+    lines.push(`| ${label} | ${day.description} | ${day.max} | ${day.min} | ${day.rain_mm} | ${day.wind_kmh} |`);
+  });
+
+  lines.push("", "### What to do");
+
+  if (rainDays.length > 0) {
+    lines.push("- Delay spraying on rainy days and avoid spraying just before expected showers.");
+    lines.push("- Clear drainage channels so water does not stand in the field.");
+    lines.push("- Protect harvested produce and inputs if any day is likely to get heavy rain.");
+  } else {
+    lines.push("- Plan irrigation based on soil moisture because rainfall support looks limited this week.");
+    lines.push("- Use the drier window for spraying, harvesting, or fertilizer application if field conditions allow.");
   }
 
   if (commodity) {
-    md += `\n### 🌾 ${commodity.charAt(0).toUpperCase() + commodity.slice(1)} Crop Advisory\n`;
+    const cropName = commodity.charAt(0).toUpperCase() + commodity.slice(1);
     const advisories: Record<string, string> = {
-      wheat: "Wheat at grain-filling stage needs 20-25°C. Avoid irrigation during high winds. Watch for rust if humidity >70%.",
-      rice: "Rice needs stable 25-35°C. Transplant seedlings when temperatures consistent. Maintain 2-3 cm water level.",
-      cotton: "Cotton boll formation needs 30-35°C. Heavy rain can damage open bolls — harvest promptly after dry spells.",
-      maize: "Maize needs 25-30°C. Monitor for stem borer in warm+humid conditions. Avoid waterlogging.",
-      tomato: "Tomatoes prefer 20-27°C. High humidity increases disease risk (blight). Stake plants before wind events.",
-      general: "Monitor soil moisture closely. Avoid field operations during or immediately after rainfall.",
+      wheat: "Keep an eye on rust when humidity stays high, and avoid irrigation during strong wind.",
+      rice: "Maintain a stable water layer and watch low-lying patches for excess standing water after rain.",
+      cotton: "Avoid waterlogging and protect open bolls if a wet spell is expected.",
+      maize: "Watch for stem borer in warm, humid conditions and prevent water from standing near the root zone.",
+      tomato: "Stake plants well and scout for blight if humidity rises after rain.",
+      general: "Watch soil moisture closely and avoid field work during or just after rainfall.",
     };
-    md += `${advisories[commodity] ?? advisories.general}\n`;
+    lines.push("", "### Crop advisory", `${cropName}: ${advisories[commodity] ?? advisories.general}`);
   }
 
-  md += `\n*📡 Source: Open-Meteo API (live data)*`;
-  return md;
+  lines.push("", "### Next step", "Source: Open-Meteo live forecast.");
+  return lines.join("\n");
 }
 
 function buildMarketResponse(
@@ -685,6 +737,7 @@ export function getDemoScenarios(): { key: DemoScenarioKey; label: string; query
   return [
     { key: "off_domain",    label: "Off-domain block",        query: "What is the capital of France?" },
     { key: "ambiguous",     label: "Ambiguous query",         query: "Tell me about the crop" },
+    { key: "low_wifi",      label: "Low-WiFi resilience",     query: "Give me mandi prices and rain update with weak internet" },
     { key: "weather_rain",  label: "Live weather forecast",   query: "Will it rain this week in Punjab?" },
     { key: "market_wheat",  label: "Live mandi prices",       query: "What is the wheat mandi price in Haryana today?" },
     { key: "pest_alert",    label: "Pest diagnosis",          query: "My rice leaves have brown spots and the plant is dying. What disease is this?" },
@@ -692,12 +745,213 @@ export function getDemoScenarios(): { key: DemoScenarioKey; label: string; query
   ];
 }
 
+async function runNarratedDemoScenario(
+  key: DemoScenarioKey,
+  onStepUpdate: (steps: AgentStep[]) => void,
+  onComplete: (response: string, steps: AgentStep[]) => void
+): Promise<boolean> {
+  const scripted: Record<
+    string,
+    {
+      steps: { node: string; status: AgentStep["status"]; message: string; duration?: number }[];
+      response: string;
+    }
+  > = {
+    off_domain: {
+      steps: [
+        {
+          node: "Guardrails",
+          status: "running",
+          message: "Checking whether the query belongs to the agricultural domain...",
+        },
+        {
+          node: "Guardrails",
+          status: "error",
+          message: "Blocked as off-domain. The system refuses unrelated queries and redirects the user back to farming topics.",
+          duration: 180,
+        },
+      ],
+      response: [
+        "## Off-domain query blocked",
+        "",
+        "The pipeline stops at the **Guardrails** layer because the request is not related to agriculture.",
+        "",
+        "| Layer | What happens | Why it matters |",
+        "|-------|--------------|----------------|",
+        "| Guardrails | Detects the request is outside farming support. | Prevents hallucinated or irrelevant answers. |",
+        "| Routing | Skips downstream tools and models. | Saves time and keeps the stack focused on agri tasks. |",
+        "| Reply | Redirects the user to supported query types. | Helps the conversation recover quickly. |",
+        "",
+        "### What the model does",
+        "- Detects that the question is outside farming, crops, weather, markets, pests, or farmer schemes.",
+        "- Prevents downstream tools and models from wasting compute on irrelevant requests.",
+        "- Returns a safe redirect instead of inventing an answer.",
+        "",
+        "### User-facing behavior",
+        "- The user is told that AgriAdvisor is focused on agricultural support.",
+        "- The response suggests asking about crops, mandi prices, rainfall, pests, or government schemes.",
+        "",
+        "### Why this matters",
+        "- Keeps the app trustworthy and domain-specific.",
+        "- Reduces hallucinations on unrelated subjects.",
+      ].join("\n"),
+    },
+    ambiguous: {
+      steps: [
+        {
+          node: "Guardrails",
+          status: "completed",
+          message: "Query is safe and within agricultural scope.",
+          duration: 140,
+        },
+        {
+          node: "Intent",
+          status: "running",
+          message: "The system is checking whether there is enough detail to answer confidently...",
+        },
+        {
+          node: "Intent",
+          status: "completed",
+          message: "Ambiguity detected. Missing crop, location, and goal, so the pipeline asks a clarification question instead of guessing.",
+          duration: 260,
+        },
+        {
+          node: "Synthesis",
+          status: "completed",
+          message: "Prepared a clarification-first reply for the user.",
+          duration: 180,
+        },
+      ],
+      response: [
+        "## Clarification-first handling",
+        "",
+        "The query is agricultural, but it is too broad to answer well.",
+        "",
+        "| Missing signal | Why it matters |",
+        "|---------------|----------------|",
+        "| Crop | Advice changes across cereals, vegetables, fruit, and fiber crops. |",
+        "| Location | Weather, soil, and mandi guidance depend on district and state. |",
+        "| User goal | Sowing, disease, irrigation, harvest, and selling need different actions. |",
+        "",
+        "### What the model notices",
+        "- The crop is not specified.",
+        "- The location is missing.",
+        "- The user goal is unclear: cultivation, disease, market, irrigation, or harvest timing.",
+        "",
+        "### What the model does",
+        "- Avoids making assumptions that could lead to poor farm advice.",
+        "- Asks for the missing details before recommending actions.",
+        "- Keeps the conversation moving with a short, targeted follow-up question.",
+        "",
+        "### Example clarification",
+        "Please tell me the crop, your location, and whether you need help with sowing, disease, irrigation, or selling.",
+        "",
+        "### What the user sees next",
+        "1. A short follow-up question instead of a vague one-size-fits-all answer.",
+        "2. A more precise recommendation as soon as the missing context is provided.",
+      ].join("\n"),
+    },
+    low_wifi: {
+      steps: [
+        {
+          node: "Guardrails",
+          status: "completed",
+          message: "Query accepted and routed for resilient handling.",
+          duration: 120,
+        },
+        {
+          node: "Intent",
+          status: "completed",
+          message: "Detected mixed intent: weather + market under weak connectivity.",
+          duration: 220,
+        },
+        {
+          node: "Web Search",
+          status: "error",
+          message: "Live web enrichment skipped because network quality is poor.",
+          duration: 620,
+        },
+        {
+          node: "Weather",
+          status: "completed",
+          message: "Weather request retried with a lightweight fallback path.",
+          duration: 290,
+        },
+        {
+          node: "Market",
+          status: "completed",
+          message: "Used cached/reference market context when live AGMARKNET was slow.",
+          duration: 310,
+        },
+        {
+          node: "Synthesis",
+          status: "completed",
+          message: "Generated a reduced-bandwidth advisory that still gives clear actions.",
+          duration: 210,
+        },
+      ],
+      response: [
+        "## Low-WiFi resilience mode",
+        "",
+        "This demo shows how the pipeline behaves when connectivity is weak or intermittent.",
+        "",
+        "| Layer | Low-WiFi behavior | User impact |",
+        "|-------|-------------------|-------------|",
+        "| Web search | Skips heavy enrichment when latency is too high. | Faster response under poor connectivity. |",
+        "| Weather | Uses a lighter fallback path for essential forecast guidance. | Rain advice can still be shown. |",
+        "| Market | Falls back to cached mandi context or MSP references. | Pricing guidance does not disappear completely. |",
+        "| Synthesis | Labels fallback usage clearly. | The user knows what is live and what is cached. |",
+        "",
+        "### How the system adapts",
+        "- Avoids depending on every live source before answering.",
+        "- Skips non-critical enrichment when network latency is high.",
+        "- Falls back to cached, recent, or reference agricultural context.",
+        "- Still produces a practical answer instead of failing silently.",
+        "",
+        "### What still works under weak connectivity",
+        "- Safety checks and intent detection.",
+        "- Clarification-first behavior.",
+        "- Cached or reference-backed weather and market advice.",
+        "",
+        "### What improves when the network returns",
+        "- Fresh mandi records from AGMARKNET.",
+        "- Richer live weather enrichment.",
+        "- More complete cross-source comparisons.",
+        "",
+        "### Example outcome",
+        "1. Rainfall guidance is still shown from a lightweight fallback path.",
+        "2. Market advice can still rely on cached mandi context or MSP references.",
+        "3. The final response stays actionable even when full live enrichment is unavailable.",
+      ].join("\n"),
+    },
+  };
+
+  const scenario = scripted[key];
+  if (!scenario) return false;
+
+  const steps: AgentStep[] = [];
+  for (const item of scenario.steps) {
+    steps.push(makeStep(item.node, item.status, item.message, item.duration));
+    onStepUpdate([...steps]);
+    await new Promise((resolve) => setTimeout(resolve, item.status === "running" ? 320 : 220));
+  }
+
+  onComplete(scenario.response, steps);
+  return true;
+}
+
 export async function runDemoScenario(
   key: DemoScenarioKey,
   onStepUpdate: (steps: AgentStep[]) => void,
   onComplete: (response: string, steps: AgentStep[]) => void
 ): Promise<void> {
+  if (await runNarratedDemoScenario(key, onStepUpdate, onComplete)) {
+    return;
+  }
+
   const scenario = getDemoScenarios().find((s) => s.key === key);
   if (!scenario) return;
   await runAgentQuery(scenario.query, onStepUpdate, onComplete);
 }
+
+export { AgentStep };

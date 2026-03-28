@@ -5,12 +5,12 @@ import React from "react";
 import {
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Colors } from "@/constants/colors";
 import { useChat } from "@/context/ChatContext";
 import { Swipeable } from "react-native-gesture-handler";

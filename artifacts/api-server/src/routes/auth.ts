@@ -201,17 +201,7 @@ router.get('/me', async (req, res) => {
 // Logout (Neon handles session revocation)
 router.post('/logout', async (req, res) => {
   try {
-    const neonToken = req.headers.authorization?.split(' ')[1];
-
-    if (neonToken) {
-      // Revoke Neon token
-      await axios.post(
-        `${NEON_AUTH_URL}/logout`,
-        {},
-        { headers: getNeonAuthHeaders(neonToken) }
-      );
-    }
-
+    // Session cleanup is handled client-side for now.
     return res.json({ message: 'Logged out successfully' });
   } catch (error) {
     console.error('Logout error:', error);
@@ -265,12 +255,23 @@ router.patch('/profile', async (req, res) => {
         email: user.email,
         name: user.name,
         picture: user.picture,
+        location: location || "",
       },
     });
   } catch (error: any) {
-    console.error('Profile update error:', error);
+    console.error('Profile update error:', error?.message || error);
     if (error.message === 'Invalid token') {
       return res.status(401).json({ error: 'Invalid token' });
+    }
+    const causeText = `${error?.message || ''} ${error?.cause?.message || ''} ${error?.cause?.sourceError?.message || ''}`.toLowerCase();
+    if (
+      causeText.includes('fetch failed') ||
+      causeText.includes('timeout') ||
+      causeText.includes('error connecting to database')
+    ) {
+      return res.status(503).json({
+        error: 'Profile service is temporarily unavailable. Please try again later.',
+      });
     }
     return res.status(500).json({ error: 'Failed to update profile' });
   }

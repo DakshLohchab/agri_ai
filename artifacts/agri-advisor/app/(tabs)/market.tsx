@@ -1,10 +1,10 @@
 import { Feather } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
   RefreshControl,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,9 +13,8 @@ import {
   Platform,
   useWindowDimensions,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Colors } from "@/constants/colors";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 type MandiRecord = {
   market: string;
@@ -35,7 +34,7 @@ type LiveMarketData = {
   avg_modal: number;
   msp?: number;
   msp_grade?: string;
-  source: "live" | "offline";
+  source: "live" | "cached" | "offline";
   last_fetched: string;
 };
 
@@ -48,14 +47,20 @@ type SchemeInfo = {
   url?: string;
 };
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
 const AGMARKNET_API_KEY =
   process.env.EXPO_PUBLIC_DATA_GOV_API_KEY ||
-  "579b464db66ec23bdd0000012e9054a4d444cdce6bf564cfca67cc1";
+  "579b464db66ec23bdd0000012e9054ad4d444cdc6ebf564cfca67cc1";
 
 const AGMARKNET_URL =
   "https://api.data.gov.in/resource/9ef84268-d588-465a-a308-a864a43d0070";
+
+const BACKEND_URL =
+  process.env.EXPO_PUBLIC_BACKEND_URL ||
+  (process.env.NODE_ENV === "development"
+    ? "http://localhost:3000"
+    : "http://localhost:3000");
+
+const MARKET_CACHE_PREFIX = "agri_market_cache_v1";
 
 const MSP_2024_25: Record<string, { msp: number; grade: string; trend: "up" | "down" | "stable"; trendPct: number }> = {
   Wheat:     { msp: 2275, grade: "FAQ",            trend: "up",     trendPct: 2.1 },
@@ -139,29 +144,15 @@ const SCHEMES: SchemeInfo[] = [
 
 const POPULAR_COMMODITIES = ["Wheat", "Rice", "Maize", "Soybean", "Cotton", "Onion", "Tomato", "Potato", "Mustard", "Groundnut"];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 function formatINR(n: number): string {
   if (!n || n === 0) return "—";
   return new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(n);
 }
 
-async function fetchAgmarknet(commodity: string, state?: string): Promise<MandiRecord[]> {
-  const params = new URLSearchParams({
-    "api-key": AGMARKNET_API_KEY,
-    format: "json",
-    "filters[commodity]": commodity,
-    limit: "30",
-    offset: "0",
-  });
-  if (state) params.set("filters[state]", state);
+function normalizeAgmarknetRecords(payload: any, commodity: string): MandiRecord[] {
+  const rawRecords = Array.isArray(payload?.records) ? payload.records : [];
 
-  const res = await fetch(`${AGMARKNET_URL}?${params}`);
-  const data = await res.json();
-
-  if (!data.records || data.records.length === 0) return [];
-
-  return data.records
+  return rawRecords
     .map((r: any) => ({
       market: r.market || r.mandi || "Local Mandi",
       state: r.state || "",
@@ -176,7 +167,114 @@ async function fetchAgmarknet(commodity: string, state?: string): Promise<MandiR
     .filter((r: MandiRecord) => r.modal_price > 0);
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+async function fetchAgmarknetDirect(
+  commodity: string,
+  state?: string
+): Promise<{ records: MandiRecord[]; message?: string }> {
+  const params = new URLSearchParams({
+    "api-key": AGMARKNET_API_KEY,
+    format: "json",
+    "filters[commodity]": commodity,
+    limit: "30",
+    offset: "0",
+  });
+  if (state) params.set("filters[state]", state);
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const res = await fetch(`${AGMARKNET_URL}?${params}`, {
+      signal: controller.signal as any,
+    });
+    clearTimeout(timeoutId);
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data?.error || data?.message || `AGMARKNET request failed (${res.status})`);
+    }
+
+    if (
+      !Array.isArray(data?.records) &&
+      (data?.error || data?.message || data?.status === "error")
+    ) {
+      throw new Error(data?.error || data?.message || "AGMARKNET returned an unexpected response");
+    }
+
+    return {
+      records: normalizeAgmarknetRecords(data, commodity),
+      message: typeof data?.message === "string" ? data.message : undefined,
+    };
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
+}
+
+async function fetchAgmarknet(
+  commodity: string,
+  state?: string
+): Promise<{ records: MandiRecord[]; message?: string }> {
+  const params = new URLSearchParams({
+    commodity,
+    limit: "30",
+  });
+  if (state) params.set("state", state);
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    const res = await fetch(`${BACKEND_URL}/api/market/agmarknet?${params}`, {
+      headers: { Accept: "application/json" },
+      signal: controller.signal as any,
+    });
+    clearTimeout(timeoutId);
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data?.error || data?.message || `Market proxy failed (${res.status})`);
+    }
+
+    return {
+      records: normalizeAgmarknetRecords(data, commodity),
+      message: typeof data?.message === "string" ? data.message : undefined,
+    };
+  } catch {
+    return await fetchAgmarknetDirect(commodity, state);
+  }
+}
+
+function getMarketCacheKey(commodity: string, state?: string) {
+  return `${MARKET_CACHE_PREFIX}:${commodity}:${(state || "all").trim().toLowerCase()}`;
+}
+
+async function loadCachedMarketData(
+  commodity: string,
+  state?: string
+): Promise<LiveMarketData | null> {
+  try {
+    const cached = await AsyncStorage.getItem(getMarketCacheKey(commodity, state));
+    if (!cached) return null;
+
+    const parsed = JSON.parse(cached) as LiveMarketData;
+    if (!Array.isArray(parsed.records) || parsed.records.length === 0) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function saveCachedMarketData(
+  commodity: string,
+  state: string | undefined,
+  data: LiveMarketData
+) {
+  try {
+    await AsyncStorage.setItem(getMarketCacheKey(commodity, state), JSON.stringify(data));
+  } catch {
+  }
+}
 
 export default function MarketScreen() {
   const { width } = useWindowDimensions();
@@ -196,29 +294,53 @@ export default function MarketScreen() {
   >([]);
   const [summaryLoading, setSummaryLoading] = useState(false);
 
-  // ── Fetch selected commodity detail ────────────────────────────────────────
   const fetchCommodityDetail = async (commodity: string, state?: string, silent = false) => {
     if (!silent) setIsLoading(true);
     setError("");
 
     try {
-      const records = await fetchAgmarknet(commodity, state || undefined);
+      const { records, message } = await fetchAgmarknet(commodity, state || undefined);
       const mspInfo = MSP_2024_25[commodity];
       const avg = records.length
         ? Math.round(records.reduce((s, r) => s + r.modal_price, 0) / records.length)
         : 0;
 
-      setLiveData({
+      const nextLiveData: LiveMarketData = {
         commodity,
         records,
         avg_modal: avg,
         msp: mspInfo?.msp,
         msp_grade: mspInfo?.grade,
-        source: records.length > 0 ? "live" : "offline",
+        source: "live",
         last_fetched: new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
-      });
-    } catch (e) {
-      setError("Could not load live market data. Showing MSP reference rates.");
+      };
+
+      if (records.length === 0) {
+        setError(
+          message ||
+            `No current AGMARKNET records found for ${commodity}${state ? ` in ${state}` : ""}. Try another commodity or clear the state filter.`
+        );
+      }
+
+      setLiveData(nextLiveData);
+      if (records.length > 0) {
+        await saveCachedMarketData(commodity, state, nextLiveData);
+      }
+    } catch (e: any) {
+      const cached = await loadCachedMarketData(commodity, state);
+      if (cached) {
+        setError("Live AGMARKNET is unavailable right now. Showing recently saved market data.");
+        setLiveData({
+          ...cached,
+          commodity,
+          msp: MSP_2024_25[commodity]?.msp,
+          msp_grade: MSP_2024_25[commodity]?.grade,
+          source: "cached",
+        });
+        return;
+      }
+
+      setError(e?.message || "Could not load live market data. Showing MSP reference rates.");
       const mspInfo = MSP_2024_25[commodity];
       setLiveData({
         commodity,
@@ -235,33 +357,30 @@ export default function MarketScreen() {
     }
   };
 
-  // ── Fetch top-level summary for all commodities ─────────────────────────────
   const fetchSummary = async () => {
     setSummaryLoading(true);
     const summaries: typeof allCommoditiesSummary = [];
     const topCommodities = ["Wheat", "Rice", "Soybean", "Maize", "Cotton"];
 
-    await Promise.allSettled(
-      topCommodities.map(async (c) => {
-        try {
-          const records = await fetchAgmarknet(c);
-          const avg = records.length
-            ? Math.round(records.reduce((s, r) => s + r.modal_price, 0) / records.length)
-            : 0;
-          const msp = MSP_2024_25[c];
-          summaries.push({
-            name: c,
-            avg,
-            count: records.length,
-            trend: msp?.trend ?? "stable",
-            trendPct: msp?.trendPct ?? 0,
-          });
-        } catch {
-          const msp = MSP_2024_25[c];
-          summaries.push({ name: c, avg: msp?.msp ?? 0, count: 0, trend: msp?.trend ?? "stable", trendPct: msp?.trendPct ?? 0 });
-        }
-      })
-    );
+    for (const c of topCommodities) {
+      try {
+        const { records } = await fetchAgmarknet(c);
+        const avg = records.length
+          ? Math.round(records.reduce((s, r) => s + r.modal_price, 0) / records.length)
+          : 0;
+        const msp = MSP_2024_25[c];
+        summaries.push({
+          name: c,
+          avg,
+          count: records.length,
+          trend: msp?.trend ?? "stable",
+          trendPct: msp?.trendPct ?? 0,
+        });
+      } catch {
+        const msp = MSP_2024_25[c];
+        summaries.push({ name: c, avg: msp?.msp ?? 0, count: 0, trend: msp?.trend ?? "stable", trendPct: msp?.trendPct ?? 0 });
+      }
+    }
 
     setAllCommoditiesSummary(summaries.sort((a, b) => topCommodities.indexOf(a.name) - topCommodities.indexOf(b.name)));
     setSummaryLoading(false);
@@ -297,7 +416,6 @@ export default function MarketScreen() {
   const mspInfo = MSP_2024_25[selectedCommodity];
   const commodityColor = COMMODITY_COLORS[selectedCommodity] ?? Colors.primary;
 
-  // Layout helpers
   const contentPad = isWeb && isWide ? 40 : 20;
   const maxW = isWeb && isWide ? 900 : undefined;
 
@@ -319,16 +437,41 @@ export default function MarketScreen() {
           />
         }
       >
-        {/* ── Header ── */}
         <View style={styles.pageHeader}>
           <Text style={styles.pageTitle}>Market</Text>
-          <View style={[styles.sourceBadge, { backgroundColor: liveData?.source === "live" ? Colors.success + "15" : Colors.warning + "15" }]}>
+          <View style={[styles.sourceBadge, {
+            backgroundColor:
+              liveData?.source === "live"
+                ? Colors.success + "15"
+                : liveData?.source === "cached"
+                  ? Colors.info + "15"
+                  : Colors.warning + "15",
+          }]}>
             <Feather
-              name={liveData?.source === "live" ? "check-circle" : "alert-circle"}
+              name={
+                liveData?.source === "live"
+                  ? "check-circle"
+                  : liveData?.source === "cached"
+                    ? "clock"
+                    : "alert-circle"
+              }
               size={11}
-              color={liveData?.source === "live" ? Colors.success : Colors.warning}
+              color={
+                liveData?.source === "live"
+                  ? Colors.success
+                  : liveData?.source === "cached"
+                    ? Colors.info
+                    : Colors.warning
+              }
             />
-            <Text style={[styles.sourceText, { color: liveData?.source === "live" ? Colors.success : Colors.warning }]}>
+            <Text style={[styles.sourceText, {
+              color:
+                liveData?.source === "live"
+                  ? Colors.success
+                  : liveData?.source === "cached"
+                    ? Colors.info
+                    : Colors.warning,
+            }]}>
               {liveData?.source === "live"
                 ? `Live AGMARKNET · ${liveData.last_fetched}`
                 : "AGMARKNET offline — MSP rates"}
@@ -336,7 +479,6 @@ export default function MarketScreen() {
           </View>
         </View>
 
-        {/* ── Tabs ── */}
         <View style={styles.tabs}>
           <Pressable
             style={[styles.tab, activeTab === "prices" && styles.tabActive]}
@@ -356,7 +498,6 @@ export default function MarketScreen() {
 
         {activeTab === "prices" && (
           <>
-            {/* ── Summary row ── */}
             <View style={[styles.summaryRow, isWide && { flexWrap: "nowrap" }]}>
               {summaryLoading
                 ? [0, 1, 2].map((i) => (
@@ -398,7 +539,6 @@ export default function MarketScreen() {
                   ))}
             </View>
 
-            {/* ── Commodity selector ── */}
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -434,7 +574,6 @@ export default function MarketScreen() {
               ))}
             </ScrollView>
 
-            {/* ── State filter + search ── */}
             <View style={[styles.filterRow, isWide && { flexDirection: "row", gap: 12 }]}>
               <View style={[styles.searchBox, isWide && { flex: 1 }]}>
                 <Feather name="map-pin" size={14} color={Colors.textMuted} />
@@ -472,7 +611,6 @@ export default function MarketScreen() {
               </Pressable>
             </View>
 
-            {/* ── Main detail card ── */}
             <View style={[styles.detailCard, { borderColor: commodityColor + "44" }]}>
               <View style={styles.detailHeader}>
                 <View style={[styles.detailIcon, { backgroundColor: commodityColor + "22" }]}>
@@ -500,7 +638,6 @@ export default function MarketScreen() {
                 )}
               </View>
 
-              {/* MSP + live avg side by side */}
               <View style={styles.priceCompareRow}>
                 {mspInfo && mspInfo.msp > 0 && (
                   <View style={[styles.priceBox, { borderColor: Colors.info + "44", backgroundColor: Colors.info + "08" }]}>
@@ -535,7 +672,6 @@ export default function MarketScreen() {
                 )}
               </View>
 
-              {/* Sell signal */}
               {liveData && mspInfo && mspInfo.msp > 0 && liveData.avg_modal > 0 && (
                 <View style={[styles.signalBanner, {
                   backgroundColor: liveData.avg_modal >= mspInfo.msp * 1.1
@@ -567,16 +703,10 @@ export default function MarketScreen() {
               )}
             </View>
 
-            {/* ── Live mandi records table ── */}
             {isLoading ? (
               <View style={styles.loadingBox}>
                 <ActivityIndicator size="large" color={commodityColor} />
                 <Text style={styles.loadingText}>Fetching live AGMARKNET data...</Text>
-              </View>
-            ) : error ? (
-              <View style={styles.errorBox}>
-                <Feather name="alert-circle" size={18} color={Colors.warning} />
-                <Text style={styles.errorText}>{error}</Text>
               </View>
             ) : filteredRecords.length > 0 ? (
               <View style={styles.tableCard}>
@@ -620,19 +750,27 @@ export default function MarketScreen() {
                 <Feather name="wifi-off" size={32} color={Colors.warning} />
                 <Text style={styles.offlineTitle}>Live data unavailable</Text>
                 <Text style={styles.offlineDesc}>
-                  AGMARKNET returned no records for "{selectedCommodity}"{stateFilter ? ` in ${stateFilter}` : ""}.
-                  Showing MSP reference rates above.
+                  We could not reach AGMARKNET for "{selectedCommodity}"{stateFilter ? ` in ${stateFilter}` : ""}.
+                  Showing MSP reference rates above while live data is unavailable.
                 </Text>
                 <Pressable style={styles.retryBtn} onPress={handleRefresh}>
                   <Feather name="refresh-cw" size={14} color={Colors.white} />
                   <Text style={styles.retryText}>Retry</Text>
                 </Pressable>
               </View>
+            ) : error ? (
+              <View style={styles.errorBox}>
+                <Feather
+                  name={liveData?.source === "live" ? "info" : "alert-circle"}
+                  size={18}
+                  color={liveData?.source === "live" ? Colors.info : Colors.warning}
+                />
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
             ) : null}
           </>
         )}
 
-        {/* ── Schemes tab ── */}
         {activeTab === "schemes" && (
           <View style={[styles.schemeGrid, isWide && { flexDirection: "row", flexWrap: "wrap" }]}>
             {SCHEMES.map((scheme) => (
@@ -669,8 +807,6 @@ export default function MarketScreen() {
     </SafeAreaView>
   );
 }
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },

@@ -236,9 +236,25 @@ Average modal price: ₹${marketData.avg_modal}/quintal`);
   const system = `You are AgriAdvisor, an expert agricultural AI assistant for Indian farmers.
 You provide accurate, actionable, and compassionate advice in ${language}.
 Use the real data provided to give specific, helpful guidance.
-Format your response in clear markdown with headers, bullet points, and actionable steps.
-Always include: key findings, specific recommendations, and next steps.
-Keep response focused and practical — farmers need clear action items.`;
+Format your response for a mobile chat screen with clear section titles, compact bullets, and visualization-friendly blocks.
+Use markdown headings, bullets, numbered actions, and compact markdown tables when they help the user understand trends.
+The frontend converts markdown tables into charts and cards, so weather and market answers should include short tables when data is available.
+Prefer this response structure:
+1. Short answer
+2. Snapshot
+3. Data table
+4. Recommended actions
+5. Next step
+For the Snapshot section, use 3 to 5 short lines in the form "Label: Value".
+For weather or rain queries, include:
+- a one-line weekly rain summary
+- a compact 5 to 7 day table with columns like Day | Condition | Max C | Min C | Rain mm | Wind km/h
+- 2 to 4 practical farm actions
+For market queries, include:
+- a short market summary
+- a compact table with columns like Market | State | Modal Price | Min | Max
+- clear sell, hold, or procurement guidance
+Avoid long paragraphs. Keep every section useful, specific, and practical.`;
 
   const userPrompt = `Farmer's query: "${query}"
 Intent: ${intent}
@@ -358,7 +374,58 @@ router.post("/query", async (req: Request, res: Response) => {
       );
     } catch (e: any) {
       // Fallback: structured response without LLM
-      finalResponse = `## Agricultural Advisory\n\nYour query: "${query}"\n\n${webResults.length > 0 ? "**Recent advisories:**\n" + webResults.map((r) => `- ${r}`).join("\n") + "\n\n" : ""}Contact Kisan Call Centre: **1800-180-1551** (free, 24x7) for expert advice.\n\n*Note: LLM synthesis unavailable — ${e.message}*`;
+      finalResponse = [
+        "## Agricultural advisory",
+        "",
+        "### Short answer",
+        `Your query: "${query}"`,
+        "",
+        "### Snapshot",
+        `Intent: ${intentResult.intent}`,
+        `Location: ${intentResult.location || location}`,
+        `Weather data: ${weatherData ? "Available" : "Unavailable"}`,
+        `Market data: ${marketData ? "Available" : "Unavailable"}`,
+        "",
+        ...(weatherData
+          ? [
+              "### Weather table",
+              "| Day | Max C | Min C | Rain mm |",
+              "|-----|-------|-------|---------|",
+              ...weatherData.forecast.slice(0, 5).map(
+                (day: any, index: number) =>
+                  `| ${
+                    index === 0
+                      ? "Today"
+                      : new Date(day.date).toLocaleDateString("en-IN", { weekday: "short" })
+                  } | ${day.max} | ${day.min} | ${day.rain_mm} |`
+              ),
+              "",
+            ]
+          : []),
+        ...(marketData?.prices?.length
+          ? [
+              "### Market table",
+              "| Market | State | Modal Price | Min | Max |",
+              "|--------|-------|-------------|-----|-----|",
+              ...marketData.prices.slice(0, 5).map(
+                (price: any) =>
+                  `| ${price.market} | ${price.state} | ${price.modal_price} | ${price.min_price} | ${price.max_price} |`
+              ),
+              "",
+            ]
+          : []),
+        ...(webResults.length > 0
+          ? ["### Recent advisories", ...webResults.map((r) => `- ${r}`), ""]
+          : []),
+        "### Recommended actions",
+        "1. Compare the latest data before taking a field or selling decision.",
+        "2. Use local KVK or mandi confirmation for high-value actions.",
+        "3. Recheck live conditions if weather or prices look unstable.",
+        "",
+        "### Next step",
+        "- Contact Kisan Call Centre: 1800-180-1551 (free, 24x7) for expert advice.",
+        `- Note: LLM synthesis unavailable - ${e.message}`,
+      ].join("\n");
     }
     auditLog.push({ node: "Synthesis", status: "completed", duration_ms: Date.now() - t6, message: "Response synthesized (Llama-3-70B)" });
 

@@ -1,8 +1,9 @@
 import { Feather } from "@expo/vector-icons";
 import React, { useState } from "react";
-import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Colors } from "@/constants/colors";
 import { AgentNode } from "@/components/AgentNode";
+import { FormattedAIContent } from "@/components/FormattedAIContent";
 import { AgentStep, Message } from "@/context/ChatContext";
 
 type Props = {
@@ -77,7 +78,7 @@ export function MessageBubble({ message }: Props) {
           </View>
         )}
         <View style={styles.assistantBubble}>
-          <Text style={styles.assistantText}>{message.content}</Text>
+          <FormattedAIContent content={message.content} variant="bubble" />
           <Text style={styles.assistantTime}>{formatTime(message.timestamp)}</Text>
         </View>
       </View>
@@ -173,12 +174,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     maxWidth: "92%",
-  },
-  assistantText: {
-    color: Colors.text,
-    fontSize: 15,
-    fontFamily: "Inter_400Regular",
-    lineHeight: 22,
   },
   assistantTime: {
     color: Colors.textMuted,

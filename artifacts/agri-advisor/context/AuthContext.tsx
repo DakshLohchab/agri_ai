@@ -9,6 +9,7 @@ interface AuthContextType {
   signup: (email: string, password: string, name: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
   googleLogin: (neonToken: string, userData: any) => Promise<void>;
+  updateProfile: (name: string, location: string) => Promise<{ savedRemotely: boolean }>;
   logout: () => Promise<void>;
   restoreToken: () => Promise<void>;
 }
@@ -39,11 +40,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const persistUser = async (nextUser: User | null) => {
+    setUser(nextUser);
+    if (nextUser) {
+      await AsyncStorage.setItem('user', JSON.stringify(nextUser));
+    } else {
+      await AsyncStorage.removeItem('user');
+    }
+  };
+
   const saveAuthData = async (authResponse: AuthResponse) => {
     setToken(authResponse.token);
-    setUser(authResponse.user);
     await AsyncStorage.setItem('token', authResponse.token);
-    await AsyncStorage.setItem('user', JSON.stringify(authResponse.user));
+    await persistUser(authResponse.user);
     if (authResponse.neonToken) {
       await AsyncStorage.setItem('neonToken', authResponse.neonToken);
     }
@@ -76,14 +85,53 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const updateProfile = async (name: string, location: string) => {
+    if (!user) {
+      throw new Error('You need to be signed in to update your profile.');
+    }
+
+    const trimmedName = name.trim();
+    const trimmedLocation = location.trim();
+    const optimisticUser: User = {
+      ...user,
+      name: trimmedName,
+      location: trimmedLocation,
+    };
+
+    try {
+      const remoteUser = await AuthService.updateProfile(trimmedName, trimmedLocation);
+      await persistUser({
+        ...optimisticUser,
+        ...remoteUser,
+        location: remoteUser.location ?? trimmedLocation,
+      });
+      return { savedRemotely: true };
+    } catch (error: any) {
+      const message = String(error?.message || "").toLowerCase();
+      const shouldFallbackToLocal =
+        message.includes('unreachable') ||
+        message.includes('temporarily unavailable') ||
+        message.includes('database') ||
+        message.includes('timeout') ||
+        message.includes('fetch failed') ||
+        message.includes('network');
+
+      if (!shouldFallbackToLocal) {
+        throw error;
+      }
+
+      await persistUser(optimisticUser);
+      return { savedRemotely: false };
+    }
+  };
+
   const logout = async () => {
     try {
       await AuthService.logout();
     } finally {
       setToken(null);
-      setUser(null);
       await AsyncStorage.removeItem('token');
-      await AsyncStorage.removeItem('user');
+      await persistUser(null);
       await AsyncStorage.removeItem('neonToken');
     }
   };
@@ -94,7 +142,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   return (
     <AuthContext.Provider
-      value={{ user, token, isLoading, signup, login, googleLogin, logout, restoreToken }}
+      value={{ user, token, isLoading, signup, login, googleLogin, updateProfile, logout, restoreToken }}
     >
       {children}
     </AuthContext.Provider>

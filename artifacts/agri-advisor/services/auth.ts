@@ -7,6 +7,7 @@ export interface User {
   id: number;
   email: string;
   name?: string;
+  location?: string;
   picture?: string;
 }
 
@@ -172,8 +173,19 @@ export const AuthService = {
         name,
         location,
       });
-      return response.data.user;
+      return {
+        ...response.data.user,
+        location: response.data.user.location ?? location,
+      };
     } catch (error: any) {
+      if (error.message === 'Network Error' || !error.response) {
+        throw new Error('Profile server is unreachable right now.');
+      }
+      if (error.response?.status === 503) {
+        throw new Error(
+          error.response.data?.error || 'Profile service is temporarily unavailable.'
+        );
+      }
       throw new Error(
         error.response?.data?.error || 'Failed to update profile'
       );
@@ -199,3 +211,5 @@ export const AuthService = {
     }
   },
 };
+
+export default AuthService;
