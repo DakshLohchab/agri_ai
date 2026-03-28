@@ -50,3 +50,11 @@ Thumbs.db
 
 #env
 .env
+
+#docs
+docs/agriadvisor-architecture.aux 
+docs/agriadvisor-architecture.fdb_latexmk 
+docs/agriadvisor-architecture.fls 
+docs/agriadvisor-architecture.log 
+docs/agriadvisor-architecture.out 
+docs/agriadvisor-architecture.synctex.gz
