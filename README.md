@@ -10,6 +10,14 @@ AgriAdvisor is a pnpm workspace that combines:
 
 This README is written for operators and developers. It documents the actual repo structure, environment variables, startup order, and the difference between the default workspace runtime and the optional full LangGraph/Ollama runtime.
 
+## Quick Links
+
+| Section | Asset | Link |
+|---|---|---|
+| Docs | Architecture PDF | [docs/Architecture/agriadvisor-architecture.pdf](docs/Architecture/agriadvisor-architecture.pdf) |
+| Docs | Impact Model PDF | [docs/ImpactModel/agriadvisor-impactmodel.pdf](docs/ImpactModel/agriadvisor-impactmodel.pdf) |
+| Demo | Demo Video | [docs/AgriAdvisor.mp4](docs/AgriAdvisor.mp4) |
+
 ## What is in this repo
 
 ### Applications
