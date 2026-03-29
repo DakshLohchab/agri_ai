@@ -10,7 +10,6 @@
 \usepackage{array}
 \usepackage{enumitem}
 \usepackage{hyperref}
-\usepackage{adjustbox}
 \usepackage{fontawesome} 
 \usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc,shapes.multipart,shadows}
 
@@ -92,13 +91,75 @@
   arrow/.style={-{Latex[length=2.5mm,width=1.8mm]}, line width=1pt, draw=branddark},
   dashedarrow/.style={arrow, dashed},
   group/.style={rounded corners=8pt, draw=branddark!40, dashed, line width=0.9pt, inner sep=8pt},
-  zone/.style={rounded corners=12pt, inner sep=15pt, drop shadow={shadow xshift=2pt, shadow yshift=-2pt, opacity=0.05}}
+  zone/.style={rounded corners=12pt, inner sep=15pt, drop shadow={shadow xshift=2pt, shadow yshift=-2pt, opacity=0.05}},
+  descbox/.style={basebox, fill=white, text width=\textwidth-24pt, align=left, inner sep=12pt}
 }
 
 \begin{document}
 
 % ==========================================
-% PAGE 1: ARCHITECTURE DIAGRAM
+% PAGE 1: PROJECT OVERVIEW (EXTENDED)
+% ==========================================
+
+\vspace*{3mm}
+\begin{center}
+    {\Huge \bfseries AgriAdvisor}\\[3mm]
+    {\Large \textnormal{\faLeaf}\ Track 5: Domain-Specialized AI Agents (Agriculture)}\\[4mm]
+    {\color{brandslate}\hrule}
+\end{center}
+\vspace{6mm}
+
+\noindent
+\begin{tikzpicture}
+
+  % -- PROBLEM STATEMENT --
+  \node[descbox] (problem) {
+    {\Large \textnormal{\faCrosshairs}\ \bfseries The Problem Statement} \\[2mm]
+    {\color{brandslate}
+    \textbf{Track 5 - Domain-Specialized AI Agents (Agriculture):} Agricultural advisory agents that work with multi-modal inputs (soil data, weather, market prices, voice in local languages) to give actionable, personalized guidance to farmers, even in low-connectivity environments. \\[2mm]
+    Farmers in rural areas face a critical lack of timely, accurate, and localized agronomic advice. Low literacy rates, regional language barriers, and intermittent internet connectivity heavily restrict access to crucial insights regarding unpredictable weather changes, pest control, and volatile market pricing. Existing generic AI models fail to provide actionable, locally-grounded agricultural data when connectivity drops. Furthermore, the ratio of agricultural extension workers to farmers is extremely low, meaning personalized, on-demand guidance is virtually non-existent, leading to suboptimal crop yields, financial loss, and unchecked soil degradation.}
+  };
+
+  % -- SOLUTION --
+  \node[descbox, anchor=north] (solution) at ([yshift=-6mm]problem.south) {
+    {\Large \textnormal{\faLightbulbO}\ \bfseries Our Solution: AgriAdvisor} \\[2mm]
+    {\color{brandslate}
+    We developed a highly resilient, multilingual mobile advisory platform powered by a hybrid AI architecture designed specifically for the agricultural domain.\\[2mm]
+    \begin{itemize}[leftmargin=*, label=\textcolor{brandblue}{\textnormal{\faCheckCircle}}, itemsep=3pt]
+        \item \textbf{Voice-First Interface:} Native speech-to-text and text-to-speech overcomes literacy and typing barriers, allowing farmers to converse naturally in their native dialects.
+        \item \textbf{Multilingual Normalization:} Translates regional queries into a unified base language for the AI reasoning engine, then accurately localizes the generated response back to the farmer.
+        \item \textbf{Resilient Hybrid Routing:} Dynamically utilizes a powerful \textbf{Express \& LangGraph cloud pipeline} when connected, but gracefully degrades to \textbf{local Ollama inference models} (Llama3, Mistral) in zero-network zones to guarantee zero downtime.
+        \item \textbf{Context-Aware Memory:} The app stores conversation context locally, allowing the AI to remember the farmer's specific crop cycle, soil type, and past issues without requiring repeated explanations.
+        \item \textbf{Live Integrations:} Enriches answers with real-time Open-Meteo weather forecasting and live AGMARKNET Mandi prices, making the AI's advice highly actionable and economically relevant.
+    \end{itemize}
+    }
+  };
+
+  % -- TECH STACK --
+  \node[descbox, anchor=north] (tech) at ([yshift=-6mm]solution.south) {
+    {\Large \textnormal{\faCode}\ \bfseries Core Technology Stack} \\[4mm]
+    \renewcommand{\arraystretch}{1.5}
+    \begin{tabularx}{\linewidth}{>{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X}
+        \textcolor{vibrantgreen!80!black}{\textbf{\Large \textnormal{\faMobile}\ Frontend \& App}} &
+        \textcolor{vibrantred!80!black}{\textbf{\Large \textnormal{\faServer}\ Backend \& AI}} &
+        \textcolor{vibrantblue!80!black}{\textbf{\Large \textnormal{\faDatabase}\ Data \& External APIs}} \\
+        \midrule
+        \textnormal{\faCheckSquareO} Expo 54 React Native & \textnormal{\faCheckSquareO} Express 5 \& Node.js & \textnormal{\faCheckSquareO} Neon Serverless Postgres \\
+        \textnormal{\faCheckSquareO} TypeScript \& Expo Router & \textnormal{\faCheckSquareO} LangGraph Orchestrator & \textnormal{\faCheckSquareO} Drizzle ORM \& AsyncStorage \\
+        \textnormal{\faCheckSquareO} Native Voice (expo-av) & \textnormal{\faCheckSquareO} Local Ollama (Llama3/Mistral) & \textnormal{\faCheckSquareO} Open-Meteo (Weather API) \\
+        \textnormal{\faCheckSquareO} Reanimated \& Gestures & \textnormal{\faCheckSquareO} Python API Services & \textnormal{\faCheckSquareO} AGMARKNET (Live Prices) \\
+        \textnormal{\faCheckSquareO} TanStack React Query & \textnormal{\faCheckSquareO} JWT \& bcryptjs Auth & \textnormal{\faCheckSquareO} HF Whisper (Transcription) \\
+        \textnormal{\faCheckSquareO} Zustand (State Mgt.) & \textnormal{\faCheckSquareO} Pino (HTTP Logging) & \textnormal{\faCheckSquareO} LibreTranslate (Localization) \\
+        \textnormal{\faCheckSquareO} SQLite (Offline Cache) & \textnormal{\faCheckSquareO} PM2 (Process Manager) & \textnormal{\faCheckSquareO} SerpAPI (Live Web Search) \\
+    \end{tabularx}
+  };
+
+\end{tikzpicture}
+
+\clearpage
+
+% ==========================================
+% PAGE 2: ARCHITECTURE DIAGRAM
 % ==========================================
 
 {\LARGE\bfseries AgriAdvisor Production Architecture}\\[0mm]
@@ -112,7 +173,7 @@
 This design documents the current production-oriented architecture, capturing the runtime layers, state ownership, multilingual processing path, fallback behavior, data providers, and voice interfaces for mobile and web.
 
 \vspace{4mm}
-\noindent\begin{adjustbox}{max width=\textwidth, center}
+\noindent\makebox[\textwidth][c]{
 \begin{tikzpicture}[font=\footnotesize]
 
   % --- LAYER 0: USERS ---
@@ -225,12 +286,12 @@ This design documents the current production-oriented architecture, capturing th
   \draw[arrow] (g4) -- (g5);
   \draw[arrow] (g5) -- (g6);
 \end{tikzpicture}
-\end{adjustbox}
+}
 
-% ==========================================
-% PAGE 2: LIFECYCLE DIAGRAM & TABLE
-% ==========================================
 \clearpage
+% ==========================================
+% PAGE 3: LIFECYCLE DIAGRAM & TABLE
+% ==========================================
 
 {\Large \textnormal{\faExchange}\ \bfseries Runtime Request and Response Lifecycle}
 
@@ -239,7 +300,7 @@ This design documents the current production-oriented architecture, capturing th
 Every user query initiates a resilient lifecycle designed to guarantee a localized, domain-accurate response. The system first captures input via text or native voice APIs, immediately normalizing the request into an English base for unified processing. Based on backend health and query intent, the orchestrator dynamically routes the request to either the primary LangGraph cloud pipeline or the local client fallback reasoning engine. After enriching the context with live external data, the system synthesizes a structured markdown response. Finally, this payload is translated back to the user's selected language, persisted to local storage alongside the base response, and delivered through the UI and TTS engines.
 
 \vspace{6mm}
-\noindent\begin{adjustbox}{max width=\textwidth, center}
+\noindent\makebox[\textwidth][c]{
 \begin{tikzpicture}[font=\footnotesize]
   
   \node[titlebox, text width=14cm] (lifetitle) at (0, 0) {\textnormal{\faRefresh}\ End-to-End Query Lifecycle Flow};
@@ -317,9 +378,9 @@ Every user query initiates a resilient lifecycle designed to guarantee a localiz
   \draw[dashedarrow] (noteb) -- (s9);
 
 \end{tikzpicture}
-\end{adjustbox}
+}
 
-\vspace{10mm}
+\vspace{1mm}
 \textnormal{\faTable}\ \textbf{Component responsibility summary.}
 
 \vspace{2mm}
@@ -339,4 +400,56 @@ Every user query initiates a resilient lifecycle designed to guarantee a localiz
 \bottomrule
 \end{tabularx}
 
+\clearpage
+
+% ==========================================
+% PAGE 2: CONCLUSION & FUTURE SCOPE
+% ==========================================
+
+\vspace*{3mm}
+\begin{center}
+    {\Huge \bfseries Project Conclusion \& Roadmap}\\[3mm]
+    {\Large \textnormal{\faMapSigns}\ Strategic Vision for AgriAdvisor}\\[4mm]
+    {\color{brandslate}\hrule}
+\end{center}
+\vspace{6mm}
+
+\noindent
+\begin{tikzpicture}
+
+  % -- CONCLUSION --
+  \node[descbox] (conclusion) {
+    {\Large \textnormal{\faFlagCheckered}\ \bfseries Conclusion} \\[2mm]
+    {\color{brandslate}
+    AgriAdvisor successfully demonstrates how modern AI can be engineered to bridge the digital divide in agriculture. By moving away from brittle, cloud-only dependencies, we have architected a system that respects the realities of rural infrastructure. 
+    \\[2mm]
+    Through the strategic combination of \textbf{Expo's cross-platform capabilities}, \textbf{hybrid Edge/Cloud LangGraph orchestration}, and \textbf{local Ollama fallback models}, AgriAdvisor guarantees that critical agronomic intelligence is always accessible. The integration of native voice processing and real-time market/weather data transforms the AI from a simple chatbot into a highly capable, localized, and accessible digital extension worker. This platform lays a highly scalable foundation for empowering farmers, increasing crop yields, and preventing agricultural revenue loss.}
+  };
+
+  % -- FUTURE SCOPE --
+  \node[descbox, anchor=north] (future) at ([yshift=-8mm]conclusion.south) {
+    {\Large \textnormal{\faRocket}\ \bfseries Future Scope \& Roadmap} \\[4mm]
+    
+    {\color{brandslate}
+    While the current architecture solves immediate communication and connectivity barriers, the platform is designed to scale horizontally. Our roadmap focuses on deepening the AI's sensory inputs and expanding its economic impact.
+    \\[4mm]
+    
+    \textbf{\large \textnormal{\faCamera}\ Phase 1: On-Device Visual Diagnostics} \\[1mm]
+    We plan to integrate lightweight, on-device computer vision models (such as MobileNet v3) directly into the Expo mobile application. This will allow farmers to take photos of diseased leaves or pests and receive instant, offline disease identification and treatment plans without needing to upload high-resolution images over slow 2G/3G networks.
+    \\[4mm]
+
+    \textbf{\large \textnormal{\faWifi}\ Phase 2: IoT \& Farm Sensor Integration} \\[1mm]
+    AgriAdvisor will be expanded to interface with low-cost Bluetooth/IoT agricultural sensors. By ingesting live telemetry data regarding soil moisture, NPK (Nitrogen, Phosphorus, Potassium) levels, and local ambient temperature, the LangGraph reasoning engine can generate hyper-personalized, precision-irrigation and fertilizer schedules.
+    \\[4mm]
+
+    \textbf{\large \textnormal{\faLanguage}\ Phase 3: Hyper-Local Dialect Fine-Tuning} \\[1mm]
+    While current API translation handles major regional languages, deep rural pockets often use highly specific agricultural colloquialisms. We intend to fine-tune our Whisper transcription models and local LLM routing specifically on these micro-dialects to drastically improve speech-to-text accuracy and user trust.
+    \\[4mm]
+
+    \textbf{\large \textnormal{\faLineChart}\ Phase 4: Predictive Yield \& Economic Modeling} \\[1mm]
+    By analyzing a farmer's historical crop data alongside live AGMARKNET pricing trends and Open-Meteo long-term climate forecasts, the AI will upgrade from a reactive advisor to a proactive economic planner. It will be able to advise farmers on the most profitable harvest windows and alert them to market gluts before they occur.
+    }
+  };
+
+\end{tikzpicture}
 \end{document}
