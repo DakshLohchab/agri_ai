@@ -13,7 +13,7 @@ This README is written for operators and developers. It documents the actual rep
 ## Quick Links
 
 | Section | Asset | Link |
-|---|---|---|
+| --- | --- | --- |
 | Docs | Architecture PDF | [docs/Architecture/agriadvisor-architecture.pdf](docs/Architecture/agriadvisor-architecture.pdf) |
 | Docs | Impact Model PDF | [docs/ImpactModel/agriadvisor-impactmodel.pdf](docs/ImpactModel/agriadvisor-impactmodel.pdf) |
 | Demo | Demo Video | [docs/AgriAdvisor.mp4](docs/AgriAdvisor.mp4) |
@@ -473,7 +473,7 @@ Minimum manual setup:
 ollama serve
 ```
 
-3. pull models:
+1. pull models:
 
 ```bash
 ollama pull llama3
@@ -482,13 +482,13 @@ ollama pull qwen:14b
 ollama pull llama3:70b
 ```
 
-4. mount `api/agri/agri.route.ts` into a server that exposes:
+1. mount `api/agri/agri.route.ts` into a server that exposes:
 
 ```text
 POST /api/agri/query
 ```
 
-5. set:
+1. set:
 
 ```env
 EXPO_PUBLIC_BACKEND_URL=http://localhost:YOUR_BACKEND_PORT
@@ -699,7 +699,7 @@ Fix:
 pnpm --filter @workspace/db run push
 ```
 
-3. restart the API server
+1. restart the API server
 
 ### 3. Chat works but model-backed answers do not
 
